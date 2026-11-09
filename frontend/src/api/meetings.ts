@@ -28,7 +28,7 @@ export interface UpdateMeetingRequest {
 export interface TranscriptSegment {
   id: number;
   meeting_id: number;
-  recording_id: number;
+  recording_id: number | null;
   speaker_label: string | null;
   speaker_name: string | null;
   text: string;
@@ -277,6 +277,36 @@ export async function askMeetingAssistant(
   return response.data;
 }
 
+export async function getLiveInsights(
+  meetingId: number,
+  text: string,
+  meetingTitle?: string,
+): Promise<{ action_items: any[]; decisions: any[] }> {
+  const response = await apiClient.post<{ action_items: any[]; decisions: any[] }>(
+    `/meetings/${meetingId}/live-insights`,
+    { text, meeting_title: meetingTitle },
+  );
+  return response.data;
+}
+
+export async function saveLiveTranscripts(
+  meetingId: number,
+  segments: {
+    text: string;
+    start_time: number;
+    end_time: number;
+    speaker_label?: string;
+    speaker_name?: string;
+    sequence_number?: number;
+  }[],
+): Promise<{ saved_segments: number }> {
+  const response = await apiClient.post<{ saved_segments: number }>(
+    `/meetings/${meetingId}/live-transcript`,
+    { segments },
+  );
+  return response.data;
+}
+
 export async function searchTranscripts(
   query: string,
   meetingId?: number,
@@ -289,3 +319,5 @@ export async function searchTranscripts(
   });
   return response.data;
 }
+
+

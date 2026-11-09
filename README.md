@@ -67,6 +67,10 @@ Interactive Frontend (React 19, Vite, Tailwind CSS v4)
 
 ## 🚀 Key Features
 
+* **🎥 Google Meet-Style Live Meeting Rooms**: Launch live in-browser video meetings with camera, microphone, screen sharing, speaking ripple visualizer, and 1-click invite link sharing.
+* **🔴 In-Browser Live Recording**: Automatically records the ongoing video and audio using `MediaRecorder` and uploads it to the meeting workspace upon ending the call.
+* **🗣️ Real-Time Live Speech-to-Text**: Continuous browser speech recognition with real-time floating captions and timestamped transcript feed.
+* **💡 Live Action Items & Decisions**: Identifies tasks, priorities, assignees, and consensus agreements live as the conversation unfolds.
 * **🎙️ Audio & Video Processing**: Upload MP3, WAV, M4A, MP4, WebM, and MOV recordings. Stream seamlessly with HTTP 206 Partial Content range requests.
 * **📝 Accurate Speech-to-Text**: Whisper model transcription with word-level start and end timestamps.
 * **👥 Speaker Diarization**: Disentangles multiple speakers using Pyannote Community-1 clustering and stabilization algorithms.

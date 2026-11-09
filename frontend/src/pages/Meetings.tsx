@@ -8,6 +8,7 @@ import {
   Plus,
   ShieldCheck,
   Trash2,
+  Video,
 } from "lucide-react";
 
 import {
@@ -82,6 +83,30 @@ export default function Meetings() {
       await loadMeetings();
     } catch {
       setError("Unable to create meeting.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleLaunchInstantMeeting() {
+    try {
+      setCreating(true);
+      setError("");
+      const now = new Date();
+      const formatted = now.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      const newMeeting = await createMeeting({
+        title: `Live Meeting - ${formatted}`,
+        description: "Live session with camera, mic, real-time transcription, and live recording.",
+        meeting_date: now.toISOString(),
+      });
+      navigate(`/meetings/${newMeeting.id}/room`);
+    } catch {
+      setError("Unable to launch instant meeting.");
     } finally {
       setCreating(false);
     }
@@ -164,13 +189,25 @@ export default function Meetings() {
               </p>
             </div>
 
-            <button
-              onClick={() => setShowCreateForm((prev) => !prev)}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              {showCreateForm ? "Cancel" : "New Meeting"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleLaunchInstantMeeting}
+                disabled={creating}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                title="Launch a live Google Meet-style call"
+              >
+                <Video className="h-4 w-4" />
+                Start Live Meet
+              </button>
+
+              <button
+                onClick={() => setShowCreateForm((prev) => !prev)}
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                {showCreateForm ? "Cancel" : "New Meeting"}
+              </button>
+            </div>
           </div>
         </div>
       </header>

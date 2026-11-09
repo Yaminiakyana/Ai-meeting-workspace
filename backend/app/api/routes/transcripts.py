@@ -28,7 +28,6 @@ def get_transcript(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
 

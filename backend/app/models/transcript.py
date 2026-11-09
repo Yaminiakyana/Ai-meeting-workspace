@@ -20,9 +20,9 @@ class Transcript(Base):
         index=True,
     )
 
-    recording_id: Mapped[int] = mapped_column(
+    recording_id: Mapped[int | None] = mapped_column(
         ForeignKey("recordings.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
 

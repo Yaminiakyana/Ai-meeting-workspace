@@ -11,10 +11,11 @@ import {
   Plus,
   ShieldCheck,
   Sparkles,
+  Video,
 } from "lucide-react";
 import axios from "axios";
 
-import { getMeetings, type Meeting } from "../api/meetings";
+import { createMeeting, getMeetings, type Meeting } from "../api/meetings";
 import { useAuthStore } from "../store/authStore";
 import { MeetingAssistantDrawer } from "../components/meetings/MeetingAssistantDrawer";
 import ThemeToggle from "../components/ThemeToggle";
@@ -47,6 +48,27 @@ export default function WorkspaceDashboard() {
   async function handleLogout() {
     await logout();
     navigate("/");
+  }
+
+  async function handleLaunchInstantMeeting() {
+    try {
+      const now = new Date();
+      const formatted = now.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      const newMeeting = await createMeeting({
+        title: `Live Meeting - ${formatted}`,
+        description: "Live session with camera, mic, real-time transcription, and live recording.",
+        meeting_date: now.toISOString(),
+      });
+      navigate(`/meetings/${newMeeting.id}/room`);
+    } catch (err) {
+      console.error("Failed to launch instant meeting:", err);
+      navigate("/meetings");
+    }
   }
 
   return (
@@ -107,6 +129,16 @@ export default function WorkspaceDashboard() {
             {/* Dark/Light mode toggle */}
             <ThemeToggle />
 
+            {/* Launch Instant Meet button */}
+            <button
+              onClick={handleLaunchInstantMeeting}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 cursor-pointer"
+              title="Launch a live Google Meet-style room"
+            >
+              <Video className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Launch Meet</span>
+            </button>
+
             {/* Ask AI button */}
             <button
               onClick={() => setIsAssistantOpen(true)}
@@ -152,7 +184,23 @@ export default function WorkspaceDashboard() {
         </section>
 
         {/* Action Cards */}
-        <section className="grid gap-5 md:grid-cols-3">
+        <section className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div
+            onClick={handleLaunchInstantMeeting}
+            className="group cursor-pointer rounded-2xl border border-emerald-200 bg-white p-6 shadow-2xs transition hover:border-emerald-400 hover:shadow-md dark:border-emerald-900/50 dark:bg-slate-900 dark:hover:border-emerald-500/50"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 transition group-hover:bg-emerald-600 group-hover:text-white">
+              <Video className="h-5 w-5" />
+            </div>
+            <h3 className="mt-4 text-base font-bold text-slate-900 dark:text-white">Live Meeting Room</h3>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+              Host Google Meet-style calls with live speech-to-text, auto-recording, and instant AI insights.
+            </p>
+            <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              Launch Room <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+            </div>
+          </div>
+
           <div
             onClick={() => navigate("/meetings")}
             className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs transition hover:border-indigo-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-500/50"
@@ -171,16 +219,16 @@ export default function WorkspaceDashboard() {
 
           <div
             onClick={() => navigate("/action-items")}
-            className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs transition hover:border-emerald-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-500/50"
+            className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs transition hover:border-amber-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-amber-500/50"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 transition group-hover:bg-emerald-600 group-hover:text-white">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 transition group-hover:bg-amber-600 group-hover:text-white">
               <CheckSquare className="h-5 w-5" />
             </div>
             <h3 className="mt-4 text-base font-bold text-slate-900 dark:text-white">Action Items</h3>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
               Track tasks, assignees, priorities, and deadlines across sessions.
             </p>
-            <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
               View Action Items <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
             </div>
           </div>

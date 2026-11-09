@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import subprocess
 import traceback
 
 import whisper
@@ -182,6 +183,38 @@ def load_json(
     ) as file:
 
         return json.load(file)
+
+
+# ============================================================
+# Audio Preparation (FFmpeg PCM standardizer)
+# ============================================================
+
+def prepare_processing_audio(audio_path: Path, processed_dir: Path) -> Path:
+    """
+    Ensure the audio file is converted to a 16kHz mono PCM WAV file
+    for maximal accuracy and zero codec issues across Whisper and Pyannote.
+    """
+    audio_path = Path(audio_path).resolve()
+    if audio_path.suffix.lower() == ".wav":
+        return audio_path
+
+    converted_wav = processed_dir / "audio_16k.wav"
+    if converted_wav.is_file() and converted_wav.stat().st_size > 0:
+        return converted_wav
+
+    print(f"Converting {audio_path.name} to 16kHz mono WAV for Whisper & Diarization...")
+    cmd = [
+        "ffmpeg", "-y", "-i", str(audio_path),
+        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        str(converted_wav)
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res.returncode == 0 and converted_wav.is_file() and converted_wav.stat().st_size > 0:
+        print(f"Audio extraction successful: {converted_wav}")
+        return converted_wav
+    else:
+        print(f"FFmpeg conversion notice: {res.stderr.decode('utf-8', errors='ignore')[:150]}")
+        return audio_path
 
 
 # ============================================================
@@ -553,11 +586,17 @@ def process_recording(self, recording_id: int = None):
 
         processed_dir = get_processed_dir(recording.id)
 
+        # Standardize audio for Whisper & Pyannote (e.g. webm/mp4 to 16kHz mono wav)
+        processing_audio_path = prepare_processing_audio(
+            audio_path=audio_path,
+            processed_dir=processed_dir,
+        )
+
         # ----------------------------------------------------
         # 3. Whisper transcription
         # ----------------------------------------------------
         whisper_result = transcribe_with_whisper(
-            audio_path=audio_path,
+            audio_path=processing_audio_path,
             recording_id=recording.id,
         )
 
@@ -572,7 +611,7 @@ def process_recording(self, recording_id: int = None):
         # 4. Speaker diarization
         # ----------------------------------------------------
         diarization_segments = run_diarization(
-            audio_path=audio_path,
+            audio_path=processing_audio_path,
             recording_id=recording.id,
         )
 
@@ -657,7 +696,7 @@ def process_recording(self, recording_id: int = None):
             print("=" * 70)
             print("GENERATING SUMMARY & EXTRACTING ACTION ITEMS/DECISIONS")
             print("=" * 70)
-            generate_meeting_insights(db, recording.meeting_id)
+            generate_meeting_insights(db, recording.meeting_id, force_regenerate=True)
             index_meeting_chunks(db, recording.meeting_id)
             print("Summary, insights, and vector chunks generated successfully.")
         except Exception as insight_err:

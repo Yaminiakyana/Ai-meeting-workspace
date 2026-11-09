@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Meetings from "./pages/Meetings";
 import MeetingDetails from "./pages/MeetingDetails";
 import ActionItemsPage from "./pages/ActionItems";
+import LiveMeetingRoom from "./pages/LiveMeetingRoom";
 
 function RootRoute() {
   const accessToken = useAuthStore((state) => state.accessToken);
@@ -42,6 +43,22 @@ export default function App() {
           element={
             <ProtectedRoute>
               <MeetingDetails />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/meetings/:meetingId/room"
+          element={
+            <ProtectedRoute>
+              <LiveMeetingRoom />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/room/:meetingId"
+          element={
+            <ProtectedRoute>
+              <LiveMeetingRoom />
             </ProtectedRoute>
           }
         />

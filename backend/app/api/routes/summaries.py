@@ -44,7 +44,6 @@ def generate_summary_endpoint(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:
@@ -90,7 +89,6 @@ def get_meeting_insights(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:

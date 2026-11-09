@@ -187,6 +187,37 @@ export default function MeetingDetails() {
     loadMeetingData();
   }, [id]);
 
+  // Auto-poll while any recording is processing so transcripts, summary, and action items populate seamlessly
+  useEffect(() => {
+    const hasPending = recordings.some(
+      (r) => r.processing_status === "uploaded" || r.processing_status === "processing"
+    );
+    if (!hasPending) return;
+
+    const pollTimer = setInterval(async () => {
+      try {
+        const [recs, trans, insights] = await Promise.all([
+          getRecordings(id),
+          getTranscript(id).catch(() => []),
+          getMeetingInsights(id).catch(() => null),
+        ]);
+        setRecordings(recs);
+        if (trans && trans.length > 0) {
+          setTranscript(trans);
+        }
+        if (insights) {
+          if (insights.summary) setSummary(insights.summary);
+          if (insights.action_items) setActionItems(insights.action_items);
+          if (insights.decisions) setDecisions(insights.decisions);
+        }
+      } catch (pollErr) {
+        console.warn("Polling meeting details notice:", pollErr);
+      }
+    }, 3000);
+
+    return () => clearInterval(pollTimer);
+  }, [id, recordings]);
+
   // Upload recording
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];

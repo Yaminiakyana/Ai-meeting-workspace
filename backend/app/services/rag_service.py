@@ -184,10 +184,11 @@ def search_meeting_chunks(
     stmt = (
         select(TranscriptChunk, Meeting)
         .join(Meeting, TranscriptChunk.meeting_id == Meeting.id)
-        .where(Meeting.owner_id == user_id)
     )
     if meeting_id is not None:
         stmt = stmt.where(TranscriptChunk.meeting_id == meeting_id)
+    else:
+        stmt = stmt.where(Meeting.owner_id == user_id)
 
     records = db.execute(stmt).all()
     if not records:

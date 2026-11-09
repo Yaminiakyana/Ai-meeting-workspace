@@ -67,7 +67,6 @@ async def upload_recording(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
 
@@ -173,7 +172,6 @@ def list_recordings(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
 
@@ -232,7 +230,6 @@ def stream_recording(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == user_id,
         )
     )
     if meeting is None:
