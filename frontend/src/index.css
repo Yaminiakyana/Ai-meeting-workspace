@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  color-scheme: light dark;
+}
+
+html.dark {
+  color-scheme: dark;
+  background-color: #090d16;
+  color: #f1f5f9;
+}
+
+/* Ensure all typed inputs, textareas, and dropdowns have high-contrast black text on white in dark mode */
+html.dark input:not([type="range"]):not([type="file"]):not([type="checkbox"]):not([type="radio"]),
+html.dark textarea,
+html.dark select {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  caret-color: #000000 !important;
+}
+
+html.dark input:not([type="range"]):not([type="file"]):not([type="checkbox"]):not([type="radio"])::placeholder,
+html.dark textarea::placeholder {
+  color: #64748b !important;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}

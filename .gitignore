@@ -1,0 +1,70 @@
+# ============================================================
+# Git Ignore for AI Meeting Workspace
+# ============================================================
+
+# Environment variables & secrets (CRITICAL)
+.env
+*.env
+*.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+conda-env/
+
+# Large media files & processing cache
+backend/storage/recordings/*
+!backend/storage/recordings/.gitkeep
+!backend/storage/recordings/.gitignore
+backend/storage/processed/*
+!backend/storage/processed/.gitkeep
+!backend/storage/processed/.gitignore
+
+# Node & Frontend build outputs
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/*.local
+
+# Logs & Celery state
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+celerybeat-schedule
+celerybeat.pid
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
