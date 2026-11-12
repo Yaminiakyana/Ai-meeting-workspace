@@ -43,22 +43,9 @@ export const useAuthStore = create<AuthState>()(
       },
 
       continueAsGuest: async () => {
-        try {
-          const res = await axios.post("http://localhost:8000/api/auth/guest");
-          const { access_token, user } = res.data;
-          get().setAuth(access_token, user, true);
-        } catch {
-          // Fallback offline guest session if backend / db is offline
-          const mockGuestId = Math.floor(Math.random() * 10000);
-          const mockGuestUser: User = {
-            id: mockGuestId,
-            email: `guest_${mockGuestId}@guest.local`,
-            full_name: `Guest Explorer #${mockGuestId}`,
-            is_guest: true,
-          };
-          const mockToken = `guest-token-${mockGuestId}`;
-          get().setAuth(mockToken, mockGuestUser, true);
-        }
+        const res = await axios.post("http://localhost:8000/api/auth/guest");
+        const { access_token, user } = res.data;
+        get().setAuth(access_token, user, true);
       },
 
       logout: async () => {

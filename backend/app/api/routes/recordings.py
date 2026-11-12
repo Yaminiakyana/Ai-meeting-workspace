@@ -82,11 +82,13 @@ async def upload_recording(
             detail="File name is required",
         )
 
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
+    raw_content_type = (file.content_type or "").split(";")[0].strip().lower()
+
+    if raw_content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Unsupported recording format. "
+                f"Unsupported recording format ({file.content_type}). "
                 "Supported formats include MP3, WAV, M4A, "
                 "MP4, WebM, and MOV."
             ),

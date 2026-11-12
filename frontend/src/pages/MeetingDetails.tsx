@@ -149,18 +149,19 @@ export default function MeetingDetails() {
   // Load meeting data & insights
   async function loadMeetingData() {
     try {
-      const [meetingRes, recordingsRes, transcriptRes, insightsRes] = await Promise.all([
-        getMeeting(id),
-        getRecordings(id),
-        getTranscript(id),
+      const meetingRes = await getMeeting(id);
+      setMeeting(meetingRes);
+
+      const [recordingsRes, transcriptRes, insightsRes] = await Promise.all([
+        getRecordings(id).catch(() => []),
+        getTranscript(id).catch(() => []),
         getMeetingInsights(id).catch(() => null),
       ]);
 
-      setMeeting(meetingRes);
-      setRecordings(recordingsRes);
-      setTranscript(transcriptRes);
+      setRecordings(recordingsRes || []);
+      setTranscript(transcriptRes || []);
 
-      if (recordingsRes.length > 0 && !activeRecordingId) {
+      if (recordingsRes && recordingsRes.length > 0 && !activeRecordingId) {
         setActiveRecordingId(recordingsRes[0].id);
       }
 

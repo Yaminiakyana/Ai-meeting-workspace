@@ -72,9 +72,11 @@ def list_meetings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """
+    List all accessible meetings in the workspace, newest first.
+    """
     meetings = db.scalars(
         select(Meeting)
-        .where(Meeting.owner_id == current_user.id)
         .order_by(Meeting.created_at.desc())
     ).all()
 

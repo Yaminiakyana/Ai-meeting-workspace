@@ -4,6 +4,7 @@ import subprocess
 import traceback
 
 import whisper
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
@@ -600,25 +601,69 @@ def process_recording(self, recording_id: int = None):
             recording_id=recording.id,
         )
 
-        whisper_segments = whisper_result["segments"]
+        whisper_segments = whisper_result.get("segments", [])
 
         if not whisper_segments:
-            raise RuntimeError(
-                "Whisper did not produce any transcript segments."
-            )
+            print("Whisper detected no verbal speech in recording; checking for live transcripts or marking completed.")
+            # Check if there are live transcripts in the DB
+            existing_transcripts = db.scalars(
+                select(Transcript).where(Transcript.meeting_id == recording.meeting_id)
+            ).all()
+
+            if existing_transcripts:
+                print(f"Preserving {len(existing_transcripts)} live transcripts.")
+            else:
+                # Add a placeholder notice segment so the user sees the audio was processed
+                placeholder = Transcript(
+                    meeting_id=recording.meeting_id,
+                    recording_id=recording.id,
+                    speaker_label="Speaker 1",
+                    speaker_name="Speaker 1",
+                    text="(No verbal speech detected in the audio recording)",
+                    start_time=0.0,
+                    end_time=recording.duration_seconds or 2.0,
+                    sequence_number=1,
+                )
+                db.add(placeholder)
+                db.commit()
+
+            try:
+                generate_meeting_insights(db, recording.meeting_id, force_regenerate=True)
+                index_meeting_chunks(db, recording.meeting_id)
+            except Exception as ins_err:
+                print(f"Insights note: {ins_err}")
+
+            recording.processing_status = "completed"
+            recording.processing_error = None
+            db.commit()
+            return {
+                "recording_id": recording.id,
+                "status": "completed",
+                "transcript_segments": len(existing_transcripts) or 1,
+            }
 
         # ----------------------------------------------------
         # 4. Speaker diarization
         # ----------------------------------------------------
-        diarization_segments = run_diarization(
-            audio_path=processing_audio_path,
-            recording_id=recording.id,
-        )
+        try:
+            diarization_segments = run_diarization(
+                audio_path=processing_audio_path,
+                recording_id=recording.id,
+            )
+        except Exception as diar_err:
+            print(f"Diarization notice ({diar_err}); falling back to default speaker.")
+            diarization_segments = []
 
         if not diarization_segments:
-            raise RuntimeError(
-                "Diarization did not produce any speaker segments."
-            )
+            print("Diarization produced no speaker segments; assigning Speaker 1 to all segments.")
+            diarization_segments = [
+                {
+                    "speaker": "Speaker 1",
+                    "start": seg.get("start", 0.0),
+                    "end": seg.get("end", 0.0),
+                }
+                for seg in whisper_segments
+            ]
 
         # ----------------------------------------------------
         # 5. Align transcript and speakers

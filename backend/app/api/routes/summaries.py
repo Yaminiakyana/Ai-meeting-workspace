@@ -130,7 +130,6 @@ def get_summary(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:
@@ -163,7 +162,6 @@ def get_action_items(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:
@@ -193,7 +191,6 @@ def update_action_item(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:
@@ -235,7 +232,6 @@ def get_decisions(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:
@@ -264,7 +260,6 @@ def generate_email_endpoint(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:
@@ -314,6 +309,5 @@ def list_all_action_items(
     return db.scalars(
         select(ActionItem)
         .join(Meeting, ActionItem.meeting_id == Meeting.id)
-        .where(Meeting.owner_id == current_user.id)
         .order_by(ActionItem.created_at.desc())
     ).all()

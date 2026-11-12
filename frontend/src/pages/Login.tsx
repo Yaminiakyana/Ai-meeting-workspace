@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   CheckCircle,
@@ -30,6 +30,8 @@ interface LoginResponse {
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const targetPath = (location.state as any)?.from?.pathname || "/";
   const [searchParams] = useSearchParams();
   const initialMode = searchParams.get("tab") === "register" ? "register" : "login";
 
@@ -79,7 +81,7 @@ export default function Login() {
         setAuth(access_token, user, false);
       }
 
-      navigate("/");
+      navigate(targetPath, { replace: true });
     } catch (err: any) {
       const message =
         err?.response?.data?.detail ??
@@ -95,7 +97,7 @@ export default function Login() {
     setGuestLoading(true);
     try {
       await continueAsGuest();
-      navigate("/");
+      navigate(targetPath, { replace: true });
     } catch {
       setError("Unable to start guest session. Please try again.");
     } finally {

@@ -1014,7 +1014,12 @@ export default function LiveMeetingRoom() {
 
   // Copy Meeting Link
   function copyMeetingLink() {
-    navigator.clipboard.writeText(window.location.href);
+    const targetId = meeting?.id || meetingId;
+    const url =
+      targetId && targetId !== "new"
+        ? `${window.location.origin}/meetings/${targetId}/room`
+        : window.location.href;
+    navigator.clipboard.writeText(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
   }
@@ -1046,10 +1051,11 @@ export default function LiveMeetingRoom() {
 
       // 2. Upload recording file to this meeting
       if (finalBlob && finalBlob.size > 0) {
-        const mimeType = finalBlob.type || "video/webm";
-        const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+        const rawMime = finalBlob.type || "video/webm";
+        const cleanMime = rawMime.split(";")[0].trim().toLowerCase() || "video/webm";
+        const ext = cleanMime.includes("mp4") ? "mp4" : "webm";
         const fileName = `meeting_${meeting.id}_recording_${Date.now()}.${ext}`;
-        const recordingFile = new File([finalBlob], fileName, { type: mimeType });
+        const recordingFile = new File([finalBlob], fileName, { type: cleanMime });
 
         setSaveProgressMessage(`Uploading recording (${(recordingFile.size / (1024 * 1024)).toFixed(1)} MB)...`);
         try {
