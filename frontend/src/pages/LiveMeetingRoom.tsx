@@ -75,24 +75,43 @@ const ICE_SERVERS = {
 // Remote Participant Video Tile Component
 const RemoteVideoTile: FC<{ peer: RemotePeer }> = ({ peer }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Dedicated audio playback ensures remote speech is always heard even if camera is off
+  useEffect(() => {
+    if (audioRef.current && peer.stream) {
+      if (audioRef.current.srcObject !== peer.stream) {
+        audioRef.current.srcObject = peer.stream;
+      }
+      audioRef.current.play().catch(() => {});
+    }
+  }, [peer.stream]);
 
   useEffect(() => {
     if (videoRef.current && peer.stream) {
-      videoRef.current.srcObject = peer.stream;
+      if (videoRef.current.srcObject !== peer.stream) {
+        videoRef.current.srcObject = peer.stream;
+      }
       videoRef.current.play().catch(() => {});
     }
   }, [peer.stream, peer.isVideoOn]);
 
+  const showVideo = Boolean(peer.isVideoOn && peer.stream);
+
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-xl min-h-[220px]">
-      {peer.isVideoOn && peer.stream ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className="h-full w-full object-cover"
-        />
-      ) : (
+      {/* Hidden audio element dedicated to remote audio */}
+      <audio ref={audioRef} autoPlay playsInline />
+
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className={`h-full w-full object-cover ${showVideo ? "block" : "hidden"}`}
+      />
+
+      {!showVideo && (
         <div className="flex flex-col items-center justify-center">
           <div
             className={`relative flex h-24 w-24 items-center justify-center rounded-full text-2xl font-extrabold text-white transition-all duration-300 ${
@@ -161,6 +180,11 @@ export default function LiveMeetingRoom() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
 
+  // Tracking all tracks and lifetime state for absolute hardware release
+  const isMeetingEndedRef = useRef<boolean>(false);
+  const activeTracksRef = useRef<Set<MediaStreamTrack>>(new Set());
+  const speechRestartTimerRef = useRef<any>(null);
+
   // Multi-Participant WebRTC Peers & Signaling
   const myPeerId = useRef<string>(`peer_${Math.random().toString(36).substring(2, 9)}`);
   const [remotePeers, setRemotePeers] = useState<Map<string, RemotePeer>>(new Map());
@@ -204,9 +228,17 @@ export default function LiveMeetingRoom() {
   const [copiedLink, setCopiedLink] = useState(false);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Absolute cleanup of camera, microphone, Web Speech API, and AudioContext
+  // Absolute cleanup of camera, microphone, Web Speech API, and AudioContext (stable ref-based)
   const releaseAllMediaDevices = useCallback(() => {
-    // 1. Immediately abort Web Speech API so Chrome/macOS releases microphone
+    isMeetingEndedRef.current = true;
+    isMicOnRef.current = false;
+    isCaptionsOnRef.current = false;
+
+    // 1. Immediately abort Web Speech API and clear timers
+    if (speechRestartTimerRef.current) {
+      clearTimeout(speechRestartTimerRef.current);
+      speechRestartTimerRef.current = null;
+    }
     if (speechRecognitionRef.current) {
       try {
         speechRecognitionRef.current.onend = null;
@@ -234,7 +266,16 @@ export default function LiveMeetingRoom() {
     }
     mixedAudioDestinationRef.current = null;
 
-    // 4. Stop all tracks on local stream ref
+    // 4. Stop ALL tracks in activeTracksRef (guaranteeing hardware LEDs turn off)
+    activeTracksRef.current.forEach((track) => {
+      try {
+        track.enabled = false;
+        track.stop();
+      } catch {}
+    });
+    activeTracksRef.current.clear();
+
+    // 5. Stop all tracks on local stream ref
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         try {
@@ -243,17 +284,6 @@ export default function LiveMeetingRoom() {
         } catch {}
       });
       localStreamRef.current = null;
-    }
-
-    // 5. Stop all tracks on local stream state
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        try {
-          track.enabled = false;
-          track.stop();
-        } catch {}
-      });
-      setLocalStream(null);
     }
 
     // 6. Stop all tracks on screen share stream
@@ -267,15 +297,33 @@ export default function LiveMeetingRoom() {
       screenStreamRef.current = null;
     }
 
-    // 7. Clear video elements
+    // 7. Clear video elements and stop their attached streams
     if (localVideoRef.current) {
+      if (localVideoRef.current.srcObject) {
+        try {
+          const s = localVideoRef.current.srcObject as MediaStream;
+          s.getTracks().forEach((t) => {
+            t.enabled = false;
+            t.stop();
+          });
+        } catch {}
+      }
       localVideoRef.current.srcObject = null;
     }
     if (screenVideoRef.current) {
+      if (screenVideoRef.current.srcObject) {
+        try {
+          const s = screenVideoRef.current.srcObject as MediaStream;
+          s.getTracks().forEach((t) => {
+            t.enabled = false;
+            t.stop();
+          });
+        } catch {}
+      }
       screenVideoRef.current.srcObject = null;
     }
 
-    // 8. Close WebRTC peer connections
+    // 8. Close WebRTC peer connections and stop their senders
     peerConnections.current.forEach((pc) => {
       try {
         pc.getSenders().forEach((sender) => {
@@ -299,11 +347,23 @@ export default function LiveMeetingRoom() {
       signalingSocketRef.current = null;
     }
 
+    setLocalStream(null);
     setIsMicOn(false);
     setIsVideoOn(false);
     setIsSpeaking(false);
     setIsScreenSharing(false);
-  }, [localStream]);
+  }, []);
+
+  // Window beforeunload listener to guarantee devices release if tab is closed
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      releaseAllMediaDevices();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [releaseAllMediaDevices]);
 
   useEffect(() => {
     recordingSecondsRef.current = recordingSeconds;
@@ -416,6 +476,11 @@ export default function LiveMeetingRoom() {
         });
       }
 
+      // Track all tracks for complete hardware shutdown on exit
+      stream.getTracks().forEach((track) => {
+        activeTracksRef.current.add(track);
+      });
+
       localStreamRef.current = stream;
       setLocalStream(stream);
       setIsVideoOn(true);
@@ -436,14 +501,17 @@ export default function LiveMeetingRoom() {
         });
       });
 
-      // Audio analysis for speaking ripple & mixed destination for recording all participants
+      // Audio analysis for speaking ripple & mixed destination
       try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioContextClass) {
           const ctx = new AudioContextClass();
           audioContextRef.current = ctx;
+          if (ctx.state === "suspended") {
+            ctx.resume().catch(() => {});
+          }
 
-          // Create a mixed destination node for combining local mic and remote audio
+          // Mixed destination node for recording all audio streams
           const dest = ctx.createMediaStreamDestination();
           mixedAudioDestinationRef.current = dest;
 
@@ -459,7 +527,7 @@ export default function LiveMeetingRoom() {
           const dataArray = new Uint8Array(bufferLength);
 
           const checkVolume = () => {
-            if (!analyserRef.current) return;
+            if (!analyserRef.current || isMeetingEndedRef.current) return;
             analyserRef.current.getByteFrequencyData(dataArray);
             let sum = 0;
             for (let i = 0; i < bufferLength; i++) {
@@ -488,17 +556,16 @@ export default function LiveMeetingRoom() {
         console.warn("Audio analyser setup skipped:", audioErr);
       }
 
-      // Start MediaRecorder with mixed audio track so all voices are recorded
-      const mixedAudioTrack = mixedAudioDestinationRef.current?.stream.getAudioTracks()[0];
-      const recordStream = mixedAudioTrack
-        ? new MediaStream([...stream.getVideoTracks(), mixedAudioTrack])
-        : stream;
-      startMediaRecording(recordStream);
+      // Record directly from hardware stream ensuring microphone voice is never lost or silent
+      startMediaRecording(stream);
     } catch (err: any) {
       console.warn("Camera/Mic access notice:", err);
       // Fallback: try audio-only if camera is unavailable
       try {
         const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStream.getTracks().forEach((track) => {
+          activeTracksRef.current.add(track);
+        });
         localStreamRef.current = audioStream;
         setLocalStream(audioStream);
         setIsVideoOn(false);
@@ -517,13 +584,14 @@ export default function LiveMeetingRoom() {
     return () => {
       releaseAllMediaDevices();
     };
-  }, [releaseAllMediaDevices]);
+  }, []);
 
   // Guarantee local video stream stays attached whenever localStream, isVideoOn, or isScreenSharing changes
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      if (localVideoRef.current.srcObject !== localStream) {
-        localVideoRef.current.srcObject = localStream;
+    const streamToAttach = localStream || localStreamRef.current;
+    if (localVideoRef.current && streamToAttach) {
+      if (localVideoRef.current.srcObject !== streamToAttach) {
+        localVideoRef.current.srcObject = streamToAttach;
       }
       localVideoRef.current.muted = true;
       localVideoRef.current.defaultMuted = true;
@@ -835,7 +903,6 @@ export default function LiveMeetingRoom() {
 
     let isDisposed = false;
     let recognition: any = null;
-    let restartTimer: any = null;
     let consecutiveErrors = 0;
     let isFatal = false;
 
@@ -902,15 +969,18 @@ export default function LiveMeetingRoom() {
 
       recognition.onend = () => {
         isSpeechRunningRef.current = false;
-        if (isDisposed || isFatal || !isMicOnRef.current || !isCaptionsOnRef.current) {
+        if (isDisposed || isFatal || isMeetingEndedRef.current || !isMicOnRef.current || !isCaptionsOnRef.current) {
           setSpeechActive(false);
           return;
         }
 
         // Throttled restart with backoff so it never loops uncontrollably
         const delay = consecutiveErrors > 3 ? 3000 : 1000;
-        restartTimer = setTimeout(() => {
-          if (!isDisposed && !isFatal && isMicOnRef.current && isCaptionsOnRef.current && !isSpeechRunningRef.current) {
+        if (speechRestartTimerRef.current) {
+          clearTimeout(speechRestartTimerRef.current);
+        }
+        speechRestartTimerRef.current = setTimeout(() => {
+          if (!isDisposed && !isFatal && !isMeetingEndedRef.current && isMicOnRef.current && isCaptionsOnRef.current && !isSpeechRunningRef.current) {
             try {
               recognition.start();
             } catch {
@@ -933,10 +1003,16 @@ export default function LiveMeetingRoom() {
 
     return () => {
       isDisposed = true;
-      if (restartTimer) clearTimeout(restartTimer);
+      if (speechRestartTimerRef.current) {
+        clearTimeout(speechRestartTimerRef.current);
+        speechRestartTimerRef.current = null;
+      }
       if (recognition) {
         try {
-          recognition.stop();
+          recognition.onend = null;
+          recognition.onerror = null;
+          recognition.onresult = null;
+          recognition.abort();
         } catch {}
       }
     };
@@ -977,25 +1053,93 @@ export default function LiveMeetingRoom() {
   }, [segments.length]);
 
   // Controls: Toggle Microphone
-  function toggleMic() {
+  async function toggleMic() {
     const nextMic = !isMicOn;
     setIsMicOn(nextMic);
     isMicOnRef.current = nextMic;
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = nextMic;
-      });
+
+    const activeAudioTrack = localStreamRef.current?.getAudioTracks().find((t) => t.readyState === "live");
+
+    if (nextMic) {
+      if (activeAudioTrack) {
+        activeAudioTrack.enabled = true;
+      } else {
+        try {
+          const freshStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+          const newTrack = freshStream.getAudioTracks()[0];
+          if (newTrack) {
+            activeTracksRef.current.add(newTrack);
+            const otherTracks = localStreamRef.current ? localStreamRef.current.getVideoTracks() : [];
+            const updatedStream = new MediaStream([...otherTracks, newTrack]);
+            localStreamRef.current = updatedStream;
+            setLocalStream(updatedStream);
+
+            // Re-route into audio context for analyser & speaking ripple
+            if (audioContextRef.current && mixedAudioDestinationRef.current) {
+              try {
+                if (audioContextRef.current.state === "suspended") {
+                  audioContextRef.current.resume().catch(() => {});
+                }
+                const source = audioContextRef.current.createMediaStreamSource(new MediaStream([newTrack]));
+                source.connect(mixedAudioDestinationRef.current);
+                if (analyserRef.current) {
+                  source.connect(analyserRef.current);
+                }
+              } catch (audioCtxErr) {
+                console.warn("AudioContext reconnection notice:", audioCtxErr);
+              }
+            }
+
+            peerConnections.current.forEach(async (pc, peerId) => {
+              const sender = pc.getSenders().find((s) => s.track && s.track.kind === "audio");
+              if (sender) {
+                await sender.replaceTrack(newTrack);
+              } else {
+                pc.addTrack(newTrack, updatedStream);
+                try {
+                  const offer = await pc.createOffer();
+                  await pc.setLocalDescription(offer);
+                  if (signalingSocketRef.current?.readyState === WebSocket.OPEN) {
+                    signalingSocketRef.current.send(
+                      JSON.stringify({
+                        type: "offer",
+                        target: peerId,
+                        sdp: offer,
+                      })
+                    );
+                  }
+                } catch {}
+              }
+            });
+          }
+        } catch (e) {
+          console.warn("Could not start fresh microphone audio track:", e);
+        }
+      }
+    } else {
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = false;
+        });
+      }
+      setIsSpeaking(false);
     }
 
     // Pause/Resume Speech Recognition accordingly
     if (speechRecognitionRef.current) {
-      if (nextMic && isCaptionsOnRef.current) {
+      if (nextMic && isCaptionsOnRef.current && !isSpeechRunningRef.current) {
         try {
           speechRecognitionRef.current.start();
         } catch {}
-      } else {
+      } else if (!nextMic && isSpeechRunningRef.current) {
         try {
-          speechRecognitionRef.current.stop();
+          speechRecognitionRef.current.abort();
         } catch {}
       }
     }
@@ -1006,21 +1150,87 @@ export default function LiveMeetingRoom() {
           type: "media_state",
           isMicOn: nextMic,
           isVideoOn,
-          isSpeaking,
+          isSpeaking: false,
         })
       );
     }
   }
 
   // Controls: Toggle Camera
-  function toggleCamera() {
+  async function toggleCamera() {
     const nextVideo = !isVideoOn;
     setIsVideoOn(nextVideo);
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = nextVideo;
-      });
+
+    const activeVideoTrack = localStreamRef.current?.getVideoTracks().find((t) => t.readyState === "live");
+
+    if (nextVideo) {
+      if (activeVideoTrack) {
+        activeVideoTrack.enabled = true;
+        if (localVideoRef.current && localStreamRef.current) {
+          if (localVideoRef.current.srcObject !== localStreamRef.current) {
+            localVideoRef.current.srcObject = localStreamRef.current;
+          }
+          localVideoRef.current.play().catch(() => {});
+        }
+      } else {
+        try {
+          let freshStream: MediaStream | null = null;
+          try {
+            freshStream = await navigator.mediaDevices.getUserMedia({
+              video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+            });
+          } catch {
+            freshStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+
+          const newTrack = freshStream.getVideoTracks()[0];
+          if (newTrack) {
+            activeTracksRef.current.add(newTrack);
+            const otherTracks = localStreamRef.current ? localStreamRef.current.getAudioTracks() : [];
+            const updatedStream = new MediaStream([...otherTracks, newTrack]);
+            localStreamRef.current = updatedStream;
+            setLocalStream(updatedStream);
+
+            if (localVideoRef.current) {
+              localVideoRef.current.srcObject = updatedStream;
+              localVideoRef.current.play().catch(() => {});
+            }
+
+            peerConnections.current.forEach(async (pc, peerId) => {
+              const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+              if (sender) {
+                await sender.replaceTrack(newTrack);
+              } else {
+                pc.addTrack(newTrack, updatedStream);
+                try {
+                  const offer = await pc.createOffer();
+                  await pc.setLocalDescription(offer);
+                  if (signalingSocketRef.current?.readyState === WebSocket.OPEN) {
+                    signalingSocketRef.current.send(
+                      JSON.stringify({
+                        type: "offer",
+                        target: peerId,
+                        sdp: offer,
+                      })
+                    );
+                  }
+                } catch {}
+              }
+            });
+          }
+        } catch (e) {
+          console.warn("Could not start fresh video track:", e);
+          setIsVideoOn(false);
+        }
+      }
+    } else {
+      if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach((track) => {
+          track.enabled = false;
+        });
+      }
     }
+
     if (signalingSocketRef.current && signalingSocketRef.current.readyState === WebSocket.OPEN) {
       signalingSocketRef.current.send(
         JSON.stringify({
@@ -1154,12 +1364,18 @@ export default function LiveMeetingRoom() {
 
   // 8. End Meeting & Finalize Intelligence (Summary, Action Items, Decisions, Recording)
   async function handleEndAndSaveMeeting() {
-    if (!meeting) return;
+    const targetId = meeting?.id || Number(meetingId);
+    if (!targetId || isNaN(targetId)) {
+      releaseAllMediaDevices();
+      navigate("/meetings");
+      return;
+    }
+
     setIsSavingMeeting(true);
-    setSaveProgressMessage("Stopping recording & turning off camera and microphone...");
+    setSaveProgressMessage("Shutting down camera & microphone...");
 
     try {
-      // 1. Stop recorder and wait for final Blob
+      // 1. Stop recorder and capture final Blob
       let finalBlob: Blob | null = null;
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         const stopPromise = new Promise<Blob>((resolve) => {
@@ -1169,7 +1385,7 @@ export default function LiveMeetingRoom() {
                 type: mediaRecorderRef.current?.mimeType || "video/webm",
               })
             );
-          }, 1500);
+          }, 800);
 
           mediaRecorderRef.current!.onstop = () => {
             clearTimeout(timeout);
@@ -1190,7 +1406,7 @@ export default function LiveMeetingRoom() {
         finalBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
       }
 
-      // 2. IMMEDIATELY TURN OFF CAMERA & MICROPHONE (hardware lights turn off now!)
+      // 2. IMMEDIATELY SHUT DOWN ALL CAMERA & MICROPHONE HARDWARE
       releaseAllMediaDevices();
 
       // 3. Upload recording file to this meeting
@@ -1198,12 +1414,12 @@ export default function LiveMeetingRoom() {
         const rawMime = finalBlob.type || "video/webm";
         const cleanMime = rawMime.split(";")[0].trim().toLowerCase() || "video/webm";
         const ext = cleanMime.includes("mp4") ? "mp4" : "webm";
-        const fileName = `meeting_${meeting.id}_recording_${Date.now()}.${ext}`;
+        const fileName = `meeting_${targetId}_recording_${Date.now()}.${ext}`;
         const recordingFile = new File([finalBlob], fileName, { type: cleanMime });
 
         setSaveProgressMessage(`Uploading recording (${(recordingFile.size / (1024 * 1024)).toFixed(1)} MB)...`);
         try {
-          await uploadRecording(meeting.id, recordingFile);
+          await uploadRecording(targetId, recordingFile);
         } catch (uploadErr) {
           console.warn("Upload recording notice:", uploadErr);
         }
@@ -1214,7 +1430,7 @@ export default function LiveMeetingRoom() {
         setSaveProgressMessage("Saving speech transcripts...");
         try {
           await saveLiveTranscripts(
-            meeting.id,
+            targetId,
             segments.map((s, idx) => ({
               text: s.text,
               speaker_label: s.speaker,
@@ -1228,26 +1444,20 @@ export default function LiveMeetingRoom() {
           console.warn("Live transcript save notice:", transcriptErr);
         }
 
-        // 5. Generate Meeting Summary, Action Items & Decisions from live speech
-        setSaveProgressMessage("Generating AI summary, action items & decisions...");
-        try {
-          await generateMeetingSummary(meeting.id, true);
-        } catch (sumErr) {
-          console.warn("Summary generation notice:", sumErr);
-        }
-      } else {
-        setSaveProgressMessage("Audio uploaded! Processing Whisper AI transcription in background...");
+        // Trigger AI summary in background without blocking navigation
+        generateMeetingSummary(targetId, true).catch((sumErr) => {
+          console.warn("Async summary generation notice:", sumErr);
+        });
       }
 
       setSaveProgressMessage("Complete! Opening your meeting intelligence workspace...");
-      await new Promise((r) => setTimeout(r, 400));
-
-      // 6. Redirect to the specific meeting details page where everything is ready
-      navigate(`/meetings/${meeting.id}`);
+      navigate(`/meetings/${targetId}`);
     } catch (err: any) {
       console.error("Failed to finalize meeting:", err);
       releaseAllMediaDevices();
-      navigate(`/meetings/${meeting.id}`);
+      navigate(`/meetings/${targetId}`);
+    } finally {
+      setIsSavingMeeting(false);
     }
   }
 
@@ -1479,15 +1689,16 @@ export default function LiveMeetingRoom() {
               {/* Side Participant Gallery Strip */}
               <div className="flex lg:flex-col gap-3 lg:w-56 shrink-0 overflow-x-auto lg:overflow-y-auto">
                 <div className="relative h-32 w-48 lg:w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shrink-0">
-                  {isVideoOn ? (
-                    <video
-                      ref={attachLocalStreamToVideo}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="h-full w-full object-cover transform -scale-x-100"
-                    />
-                  ) : (
+                  <video
+                    ref={attachLocalStreamToVideo}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`h-full w-full object-cover transform -scale-x-100 ${
+                      isVideoOn ? "block" : "hidden"
+                    }`}
+                  />
+                  {!isVideoOn && (
                     <div className="flex h-full w-full items-center justify-center bg-slate-800 text-base font-bold text-white">
                       {user?.full_name?.charAt(0) || "U"}
                     </div>
@@ -1517,15 +1728,16 @@ export default function LiveMeetingRoom() {
             >
               {/* Local Participant Tile (Your Camera Feed) */}
               <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl min-h-[220px]">
-                {isVideoOn ? (
-                  <video
-                    ref={attachLocalStreamToVideo}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="h-full w-full object-cover transform -scale-x-100"
-                  />
-                ) : (
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`h-full w-full object-cover transform -scale-x-100 ${
+                    isVideoOn ? "block" : "hidden"
+                  }`}
+                />
+                {!isVideoOn && (
                   <div className="flex flex-col items-center justify-center">
                     <div
                       className={`relative flex h-24 w-24 items-center justify-center rounded-full text-2xl font-extrabold text-white transition-all duration-300 ${
