@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-this-to-a-long-random-secret"
     redis_url: str = "redis://localhost:6379/0"
     jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 60
+    jwt_access_token_expire_minutes: int = 43200  # 30 days
 
     # LLM & AI configurations
     openai_api_key: str | None = None

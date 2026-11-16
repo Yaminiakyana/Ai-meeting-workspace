@@ -31,8 +31,9 @@ interface LoginResponse {
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const targetPath = (location.state as any)?.from?.pathname || "/";
   const [searchParams] = useSearchParams();
+  const queryFrom = searchParams.get("from");
+  const targetPath = (location.state as any)?.from?.pathname || queryFrom || "/";
   const initialMode = searchParams.get("tab") === "register" ? "register" : "login";
 
   const [mode, setMode] = useState<"login" | "register">(initialMode);

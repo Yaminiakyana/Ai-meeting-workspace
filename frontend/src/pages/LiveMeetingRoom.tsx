@@ -171,6 +171,7 @@ export default function LiveMeetingRoom() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const mixedAudioDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
   // In-browser recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -202,6 +203,107 @@ export default function LiveMeetingRoom() {
   // Link copy feedback
   const [copiedLink, setCopiedLink] = useState(false);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Absolute cleanup of camera, microphone, Web Speech API, and AudioContext
+  const releaseAllMediaDevices = useCallback(() => {
+    // 1. Immediately abort Web Speech API so Chrome/macOS releases microphone
+    if (speechRecognitionRef.current) {
+      try {
+        speechRecognitionRef.current.onend = null;
+        speechRecognitionRef.current.onerror = null;
+        speechRecognitionRef.current.onresult = null;
+        speechRecognitionRef.current.abort();
+      } catch {}
+      speechRecognitionRef.current = null;
+    }
+    isSpeechRunningRef.current = false;
+    setSpeechActive(false);
+
+    // 2. Stop audio volume analysis loop
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+
+    // 3. Close AudioContext so all media stream source nodes release hardware
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close().catch(() => {});
+      } catch {}
+      audioContextRef.current = null;
+    }
+    mixedAudioDestinationRef.current = null;
+
+    // 4. Stop all tracks on local stream ref
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.enabled = false;
+          track.stop();
+        } catch {}
+      });
+      localStreamRef.current = null;
+    }
+
+    // 5. Stop all tracks on local stream state
+    if (localStream) {
+      localStream.getTracks().forEach((track) => {
+        try {
+          track.enabled = false;
+          track.stop();
+        } catch {}
+      });
+      setLocalStream(null);
+    }
+
+    // 6. Stop all tracks on screen share stream
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.enabled = false;
+          track.stop();
+        } catch {}
+      });
+      screenStreamRef.current = null;
+    }
+
+    // 7. Clear video elements
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (screenVideoRef.current) {
+      screenVideoRef.current.srcObject = null;
+    }
+
+    // 8. Close WebRTC peer connections
+    peerConnections.current.forEach((pc) => {
+      try {
+        pc.getSenders().forEach((sender) => {
+          if (sender.track) {
+            try {
+              sender.track.enabled = false;
+              sender.track.stop();
+            } catch {}
+          }
+        });
+        pc.close();
+      } catch {}
+    });
+    peerConnections.current.clear();
+
+    // 9. Close WebSocket signaling
+    if (signalingSocketRef.current) {
+      try {
+        signalingSocketRef.current.close();
+      } catch {}
+      signalingSocketRef.current = null;
+    }
+
+    setIsMicOn(false);
+    setIsVideoOn(false);
+    setIsSpeaking(false);
+    setIsScreenSharing(false);
+  }, [localStream]);
 
   useEffect(() => {
     recordingSecondsRef.current = recordingSeconds;
@@ -265,7 +367,18 @@ export default function LiveMeetingRoom() {
         }
       } catch (err: any) {
         if (active) {
-          setError(err.response?.data?.detail || err.message || "Failed to initialize live meeting");
+          const status = err.response?.status;
+          if (status === 401) {
+            useAuthStore.getState().logout();
+            navigate(`/login?from=${encodeURIComponent(window.location.pathname)}`);
+            return;
+          }
+          releaseAllMediaDevices();
+          setError(
+            err.response?.data?.detail ||
+            err.message ||
+            "Failed to initialize live meeting"
+          );
         }
       }
     }
@@ -275,7 +388,7 @@ export default function LiveMeetingRoom() {
     return () => {
       active = false;
     };
-  }, [meetingId]);
+  }, [meetingId, navigate, releaseAllMediaDevices]);
 
   // 2. Setup Camera & Microphone Stream Immediately
   async function requestMediaPermissions() {
@@ -323,13 +436,20 @@ export default function LiveMeetingRoom() {
         });
       });
 
-      // Audio analysis for speaking ripple
+      // Audio analysis for speaking ripple & mixed destination for recording all participants
       try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioContextClass) {
           const ctx = new AudioContextClass();
           audioContextRef.current = ctx;
+
+          // Create a mixed destination node for combining local mic and remote audio
+          const dest = ctx.createMediaStreamDestination();
+          mixedAudioDestinationRef.current = dest;
+
           const source = ctx.createMediaStreamSource(stream);
+          source.connect(dest);
+
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 256;
           source.connect(analyser);
@@ -368,8 +488,12 @@ export default function LiveMeetingRoom() {
         console.warn("Audio analyser setup skipped:", audioErr);
       }
 
-      // Start MediaRecorder for continuous recording
-      startMediaRecording(stream);
+      // Start MediaRecorder with mixed audio track so all voices are recorded
+      const mixedAudioTrack = mixedAudioDestinationRef.current?.stream.getAudioTracks()[0];
+      const recordStream = mixedAudioTrack
+        ? new MediaStream([...stream.getVideoTracks(), mixedAudioTrack])
+        : stream;
+      startMediaRecording(recordStream);
     } catch (err: any) {
       console.warn("Camera/Mic access notice:", err);
       // Fallback: try audio-only if camera is unavailable
@@ -391,19 +515,9 @@ export default function LiveMeetingRoom() {
     requestMediaPermissions();
 
     return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      if (screenStreamRef.current) {
-        screenStreamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
+      releaseAllMediaDevices();
     };
-  }, []);
+  }, [releaseAllMediaDevices]);
 
   // Guarantee local video stream stays attached whenever localStream, isVideoOn, or isScreenSharing changes
   useEffect(() => {
@@ -587,6 +701,20 @@ export default function LiveMeetingRoom() {
           }
           return next;
         });
+
+        // Mix remote participant audio into recorded stream
+        if (event.streams[0] && audioContextRef.current && mixedAudioDestinationRef.current) {
+          try {
+            const remoteAudioTrack = event.streams[0].getAudioTracks()[0];
+            if (remoteAudioTrack) {
+              const remoteStream = new MediaStream([remoteAudioTrack]);
+              const remoteSource = audioContextRef.current.createMediaStreamSource(remoteStream);
+              remoteSource.connect(mixedAudioDestinationRef.current);
+            }
+          } catch (mixErr) {
+            console.warn("Could not connect remote audio to recorder destination:", mixErr);
+          }
+        }
       };
 
       if (isInitiator) {
@@ -1028,28 +1156,44 @@ export default function LiveMeetingRoom() {
   async function handleEndAndSaveMeeting() {
     if (!meeting) return;
     setIsSavingMeeting(true);
-    setSaveProgressMessage("Finalizing meeting recording...");
+    setSaveProgressMessage("Stopping recording & turning off camera and microphone...");
 
     try {
       // 1. Stop recorder and wait for final Blob
       let finalBlob: Blob | null = null;
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         const stopPromise = new Promise<Blob>((resolve) => {
-          if (!mediaRecorderRef.current) return resolve(new Blob());
-          mediaRecorderRef.current.onstop = () => {
-            const b = new Blob(recordedChunksRef.current, {
-              type: mediaRecorderRef.current?.mimeType || "video/webm",
-            });
-            resolve(b);
+          const timeout = setTimeout(() => {
+            resolve(
+              new Blob(recordedChunksRef.current, {
+                type: mediaRecorderRef.current?.mimeType || "video/webm",
+              })
+            );
+          }, 1500);
+
+          mediaRecorderRef.current!.onstop = () => {
+            clearTimeout(timeout);
+            resolve(
+              new Blob(recordedChunksRef.current, {
+                type: mediaRecorderRef.current?.mimeType || "video/webm",
+              })
+            );
           };
-          mediaRecorderRef.current.stop();
+
+          try {
+            mediaRecorderRef.current!.requestData();
+          } catch {}
+          mediaRecorderRef.current!.stop();
         });
         finalBlob = await stopPromise;
       } else if (recordedChunksRef.current.length > 0) {
         finalBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
       }
 
-      // 2. Upload recording file to this meeting
+      // 2. IMMEDIATELY TURN OFF CAMERA & MICROPHONE (hardware lights turn off now!)
+      releaseAllMediaDevices();
+
+      // 3. Upload recording file to this meeting
       if (finalBlob && finalBlob.size > 0) {
         const rawMime = finalBlob.type || "video/webm";
         const cleanMime = rawMime.split(";")[0].trim().toLowerCase() || "video/webm";
@@ -1065,7 +1209,7 @@ export default function LiveMeetingRoom() {
         }
       }
 
-      // 3. Save live speech transcripts to database if any were captured live
+      // 4. Save live speech transcripts to database if any were captured live
       if (segments.length > 0) {
         setSaveProgressMessage("Saving speech transcripts...");
         try {
@@ -1084,7 +1228,7 @@ export default function LiveMeetingRoom() {
           console.warn("Live transcript save notice:", transcriptErr);
         }
 
-        // 4. Generate Meeting Summary, Action Items & Decisions from live speech
+        // 5. Generate Meeting Summary, Action Items & Decisions from live speech
         setSaveProgressMessage("Generating AI summary, action items & decisions...");
         try {
           await generateMeetingSummary(meeting.id, true);
@@ -1092,24 +1236,17 @@ export default function LiveMeetingRoom() {
           console.warn("Summary generation notice:", sumErr);
         }
       } else {
-        setSaveProgressMessage("Transcribing audio with Whisper AI model in background...");
-      }
-
-      // Clean up hardware streams
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      if (screenStreamRef.current) {
-        screenStreamRef.current.getTracks().forEach((t) => t.stop());
+        setSaveProgressMessage("Audio uploaded! Processing Whisper AI transcription in background...");
       }
 
       setSaveProgressMessage("Complete! Opening your meeting intelligence workspace...");
       await new Promise((r) => setTimeout(r, 400));
 
-      // 5. Redirect to the specific meeting details page where everything is ready
+      // 6. Redirect to the specific meeting details page where everything is ready
       navigate(`/meetings/${meeting.id}`);
     } catch (err: any) {
       console.error("Failed to finalize meeting:", err);
+      releaseAllMediaDevices();
       navigate(`/meetings/${meeting.id}`);
     }
   }
@@ -1125,17 +1262,55 @@ export default function LiveMeetingRoom() {
   const totalParticipants = 1 + remotePeerList.length;
 
   if (error) {
+    const isAuthError =
+      error.toLowerCase().includes("token") ||
+      error.toLowerCase().includes("unauthorized") ||
+      error.toLowerCase().includes("credential");
+
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 p-6 text-white">
+      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 p-6 text-white text-center">
         <AlertCircle className="h-12 w-12 text-red-400" />
-        <h2 className="mt-4 text-xl font-bold">Unable to start live room</h2>
-        <p className="mt-2 text-sm text-slate-400">{error}</p>
-        <button
-          onClick={() => navigate("/meetings")}
-          className="mt-6 rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white transition hover:bg-emerald-700 cursor-pointer"
-        >
-          Return to Meetings
-        </button>
+        <h2 className="mt-4 text-xl font-bold">
+          {isAuthError ? "Sign In Required to Join Room" : "Unable to Join Live Room"}
+        </h2>
+        <p className="mt-2 text-sm text-slate-400 max-w-md">
+          {isAuthError
+            ? "Your login session has expired or is invalid. Please sign in with your account to continue into this meeting."
+            : error}
+        </p>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          {isAuthError ? (
+            <button
+              onClick={() => {
+                releaseAllMediaDevices();
+                useAuthStore.getState().logout();
+                navigate(`/login?from=${encodeURIComponent(window.location.pathname)}`);
+              }}
+              className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white transition hover:bg-emerald-700 cursor-pointer shadow-lg shadow-emerald-900/30"
+            >
+              Sign In to Join Meeting
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                releaseAllMediaDevices();
+                navigate("/meetings");
+              }}
+              className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white transition hover:bg-emerald-700 cursor-pointer"
+            >
+              Return to Meetings
+            </button>
+          )}
+          <button
+            onClick={() => {
+              releaseAllMediaDevices();
+              navigate("/meetings/new/room");
+            }}
+            className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-2.5 font-semibold text-slate-200 transition hover:bg-slate-700 cursor-pointer"
+          >
+            Create New Room
+          </button>
+        </div>
       </div>
     );
   }

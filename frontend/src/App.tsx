@@ -9,16 +9,39 @@ import MeetingDetails from "./pages/MeetingDetails";
 import ActionItemsPage from "./pages/ActionItems";
 import LiveMeetingRoom from "./pages/LiveMeetingRoom";
 
+function isTokenExpired(token: string): boolean {
+  try {
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return true;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    const { exp } = JSON.parse(jsonPayload);
+    if (!exp) return false;
+    return Date.now() >= exp * 1000;
+  } catch {
+    return true;
+  }
+}
+
 function RootRoute() {
   const accessToken = useAuthStore((state) => state.accessToken);
-  return accessToken ? <WorkspaceDashboard /> : <LandingPage />;
+  const isValid = accessToken && !isTokenExpired(accessToken);
+  return isValid ? <WorkspaceDashboard /> : <LandingPage />;
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const accessToken = useAuthStore((state) => state.accessToken);
   const location = useLocation();
 
-  if (!accessToken) {
+  if (!accessToken || isTokenExpired(accessToken)) {
+    if (accessToken) {
+      useAuthStore.getState().logout();
+    }
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
   return <>{children}</>;
