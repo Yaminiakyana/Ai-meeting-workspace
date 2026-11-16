@@ -190,6 +190,13 @@ export async function getRecordings(meetingId: number): Promise<Recording[]> {
   return response.data;
 }
 
+export async function deleteRecording(
+  meetingId: number,
+  recordingId: number,
+): Promise<void> {
+  await apiClient.delete(`/meetings/${meetingId}/recordings/${recordingId}`);
+}
+
 export async function getTranscript(
   meetingId: number,
 ): Promise<TranscriptSegment[]> {

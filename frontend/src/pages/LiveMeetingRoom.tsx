@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FC } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -21,6 +21,8 @@ import {
   Users,
   Video,
   VideoOff,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 
 import {
@@ -76,6 +78,7 @@ const ICE_SERVERS = {
 const RemoteVideoTile: FC<{ peer: RemotePeer }> = ({ peer }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
 
   // Dedicated audio playback ensures remote speech is always heard even if camera is off
   useEffect(() => {
@@ -83,9 +86,10 @@ const RemoteVideoTile: FC<{ peer: RemotePeer }> = ({ peer }) => {
       if (audioRef.current.srcObject !== peer.stream) {
         audioRef.current.srcObject = peer.stream;
       }
+      audioRef.current.muted = isSpeakerMuted;
       audioRef.current.play().catch(() => {});
     }
-  }, [peer.stream]);
+  }, [peer.stream, isSpeakerMuted]);
 
   useEffect(() => {
     if (videoRef.current && peer.stream) {
@@ -134,6 +138,29 @@ const RemoteVideoTile: FC<{ peer: RemotePeer }> = ({ peer }) => {
         </div>
       )}
 
+      {/* Top right: Mute Remote Speaker button (solves echo on same laptop!) */}
+      <button
+        onClick={() => setIsSpeakerMuted(!isSpeakerMuted)}
+        className={`absolute top-3 right-3 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold backdrop-blur-md transition shadow-md cursor-pointer ${
+          isSpeakerMuted
+            ? "bg-red-600/90 text-white ring-1 ring-red-400/50 hover:bg-red-700"
+            : "bg-black/70 text-slate-200 ring-1 ring-white/20 hover:bg-black/90"
+        }`}
+        title={isSpeakerMuted ? "Unmute participant speaker" : "Mute participant speaker (solves echo on same laptop)"}
+      >
+        {isSpeakerMuted ? (
+          <>
+            <VolumeX className="h-3.5 w-3.5 text-white" />
+            <span>Speaker Muted</span>
+          </>
+        ) : (
+          <>
+            <Volume2 className="h-3.5 w-3.5 text-slate-300" />
+            <span className="text-[11px] text-slate-300">Mute Speaker (Stop Echo)</span>
+          </>
+        )}
+      </button>
+
       <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-lg bg-black/60 px-2.5 py-1 text-xs text-white backdrop-blur-md">
         <span>{peer.userName}</span>
         {peer.isMicOn ? (
@@ -157,6 +184,20 @@ export default function LiveMeetingRoom() {
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Determine if current user is the host / meeting creator
+  const isHost = useMemo(() => {
+    if (!meeting) return meetingId === "new" || !meetingId;
+    return meeting.owner_id === user?.id;
+  }, [meeting, user?.id, meetingId]);
+
+  const isHostRef = useRef<boolean>(isHost);
+  useEffect(() => {
+    isHostRef.current = isHost;
+  }, [isHost]);
+
+  const [hostEndedNotice, setHostEndedNotice] = useState<boolean>(false);
+  const connectedAudioSources = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map());
 
   // Editable Meeting Title
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -258,6 +299,13 @@ export default function LiveMeetingRoom() {
     }
 
     // 3. Close AudioContext so all media stream source nodes release hardware
+    connectedAudioSources.current.forEach((source) => {
+      try {
+        source.disconnect();
+      } catch {}
+    });
+    connectedAudioSources.current.clear();
+
     if (audioContextRef.current) {
       try {
         audioContextRef.current.close().catch(() => {});
@@ -265,6 +313,15 @@ export default function LiveMeetingRoom() {
       audioContextRef.current = null;
     }
     mixedAudioDestinationRef.current = null;
+
+    // Stop MediaRecorder if running
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+    }
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
 
     // 4. Stop ALL tracks in activeTracksRef (guaranteeing hardware LEDs turn off)
     activeTracksRef.current.forEach((track) => {
@@ -372,6 +429,23 @@ export default function LiveMeetingRoom() {
   useEffect(() => {
     isMicOnRef.current = isMicOn;
   }, [isMicOn]);
+
+  // Proactively resume AudioContext on user interaction to guarantee host voice is never silent
+  useEffect(() => {
+    const resumeAudioEngine = () => {
+      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+        audioContextRef.current.resume().catch(() => {});
+      }
+    };
+    window.addEventListener("pointerdown", resumeAudioEngine);
+    window.addEventListener("click", resumeAudioEngine);
+    window.addEventListener("keydown", resumeAudioEngine);
+    return () => {
+      window.removeEventListener("pointerdown", resumeAudioEngine);
+      window.removeEventListener("click", resumeAudioEngine);
+      window.removeEventListener("keydown", resumeAudioEngine);
+    };
+  }, []);
 
   // Robust Callback Ref for Local Video (Guaranteeing face shows on screen)
   const attachLocalStreamToVideo = useCallback((node: HTMLVideoElement | null) => {
@@ -517,6 +591,7 @@ export default function LiveMeetingRoom() {
 
           const source = ctx.createMediaStreamSource(stream);
           source.connect(dest);
+          connectedAudioSources.current.set("local", source);
 
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 256;
@@ -555,9 +630,6 @@ export default function LiveMeetingRoom() {
       } catch (audioErr) {
         console.warn("Audio analyser setup skipped:", audioErr);
       }
-
-      // Record directly from hardware stream ensuring microphone voice is never lost or silent
-      startMediaRecording(stream);
     } catch (err: any) {
       console.warn("Camera/Mic access notice:", err);
       // Fallback: try audio-only if camera is unavailable
@@ -570,13 +642,55 @@ export default function LiveMeetingRoom() {
         setLocalStream(audioStream);
         setIsVideoOn(false);
         setIsMicOn(true);
-        startMediaRecording(audioStream);
       } catch (audioErr) {
         console.warn("Microphone access unavailable:", audioErr);
         setMediaPermissionDenied(true);
       }
     }
   }
+
+  // Master Recording for the Whole Meeting (Host only: records host video + all mixed audio)
+  const startMasterRecording = useCallback(async () => {
+    if (!isHostRef.current || isRecording || mediaRecorderRef.current) return;
+
+    try {
+      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+        try {
+          await audioContextRef.current.resume();
+          console.log("AudioContext active and resumed for master recording.");
+        } catch {}
+      }
+
+      let audioTrack: MediaStreamTrack | null = null;
+      if (mixedAudioDestinationRef.current) {
+        audioTrack = mixedAudioDestinationRef.current.stream.getAudioTracks()[0];
+      }
+      if (!audioTrack && localStreamRef.current) {
+        audioTrack = localStreamRef.current.getAudioTracks()[0];
+      }
+
+      const videoTrack = screenStreamRef.current?.getVideoTracks()[0] || localStreamRef.current?.getVideoTracks()[0];
+
+      const tracksToRecord: MediaStreamTrack[] = [];
+      if (videoTrack) tracksToRecord.push(videoTrack);
+      if (audioTrack) tracksToRecord.push(audioTrack);
+
+      if (tracksToRecord.length === 0) return;
+
+      const recordStream = new MediaStream(tracksToRecord);
+      startMediaRecording(recordStream);
+      console.log("Master recording started by host for the whole meeting.");
+    } catch (err) {
+      console.warn("startMasterRecording notice:", err);
+    }
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (!isHost || isRecording || !meeting) return;
+    if (localStreamRef.current || mixedAudioDestinationRef.current) {
+      startMasterRecording();
+    }
+  }, [isHost, meeting, isRecording, localStream, startMasterRecording]);
 
   useEffect(() => {
     requestMediaPermissions();
@@ -705,6 +819,26 @@ export default function LiveMeetingRoom() {
             closePeerConnection(msg.peerId);
             break;
           }
+
+          case "live_transcript_segment": {
+            if (msg.segment && msg.sender !== myPeerId.current) {
+              setSegments((prev) => {
+                if (prev.some((s) => s.id === msg.segment.id)) return prev;
+                return [...prev, msg.segment];
+              });
+            }
+            break;
+          }
+
+          case "meeting_ended": {
+            releaseAllMediaDevices();
+            setHostEndedNotice(true);
+            const target = meeting?.id || meetingId;
+            setTimeout(() => {
+              navigate(`/meetings/${target}`);
+            }, 1800);
+            break;
+          }
         }
       } catch (e) {
         console.warn("Signaling notice:", e);
@@ -758,29 +892,34 @@ export default function LiveMeetingRoom() {
       };
 
       pc.ontrack = (event) => {
+        const remoteStream = event.streams[0] || new MediaStream([event.track]);
         setRemotePeers((prev) => {
           const next = new Map(prev);
           const peer = next.get(peerId);
           if (peer) {
             next.set(peerId, {
               ...peer,
-              stream: event.streams[0],
+              stream: remoteStream,
             });
           }
           return next;
         });
 
-        // Mix remote participant audio into recorded stream
-        if (event.streams[0] && audioContextRef.current && mixedAudioDestinationRef.current) {
+        // Mix remote participant audio into master recorder destination (Host only)
+        const audioTrack = event.track.kind === "audio" ? event.track : remoteStream?.getAudioTracks()[0];
+        if (isHostRef.current && audioTrack && audioContextRef.current && mixedAudioDestinationRef.current) {
           try {
-            const remoteAudioTrack = event.streams[0].getAudioTracks()[0];
-            if (remoteAudioTrack) {
-              const remoteStream = new MediaStream([remoteAudioTrack]);
-              const remoteSource = audioContextRef.current.createMediaStreamSource(remoteStream);
+            if (!connectedAudioSources.current.has(peerId)) {
+              if (audioContextRef.current.state === "suspended") {
+                audioContextRef.current.resume().catch(() => {});
+              }
+              const remoteSource = audioContextRef.current.createMediaStreamSource(new MediaStream([audioTrack]));
               remoteSource.connect(mixedAudioDestinationRef.current);
+              connectedAudioSources.current.set(peerId, remoteSource);
+              console.log(`Mixed remote audio for peer ${peerId} into master recording.`);
             }
           } catch (mixErr) {
-            console.warn("Could not connect remote audio to recorder destination:", mixErr);
+            console.warn("Could not connect remote audio to master recorder destination:", mixErr);
           }
         }
       };
@@ -809,6 +948,13 @@ export default function LiveMeetingRoom() {
       if (pc) {
         pc.close();
         peerConnections.current.delete(peerId);
+      }
+      const source = connectedAudioSources.current.get(peerId);
+      if (source) {
+        try {
+          source.disconnect();
+        } catch {}
+        connectedAudioSources.current.delete(peerId);
       }
       setRemotePeers((prev) => {
         const next = new Map(prev);
@@ -934,17 +1080,28 @@ export default function LiveMeetingRoom() {
               const s = nowSec % 60;
               const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 
-              setSegments((prev) => [
-                ...prev,
-                {
-                  id: Math.random().toString(36).substring(2, 9),
-                  speaker: user?.full_name?.split(" ")[0] || "You",
-                  text: trimmed,
-                  timestamp: timeStr,
-                  startTimeSec: Math.max(0, nowSec - 4),
-                  endTimeSec: nowSec,
-                },
-              ]);
+              const newSegment: LiveSegment = {
+                id: Math.random().toString(36).substring(2, 9),
+                speaker: user?.full_name?.split(" ")[0] || (isHostRef.current ? "Host" : "Participant"),
+                text: trimmed,
+                timestamp: timeStr,
+                startTimeSec: Math.max(0, nowSec - 4),
+                endTimeSec: nowSec,
+              };
+
+              setSegments((prev) => [...prev, newSegment]);
+
+              // Broadcast speech segment to all peers over WebSocket
+              if (signalingSocketRef.current && signalingSocketRef.current.readyState === WebSocket.OPEN) {
+                try {
+                  signalingSocketRef.current.send(
+                    JSON.stringify({
+                      type: "live_transcript_segment",
+                      segment: newSegment,
+                    })
+                  );
+                } catch {}
+              }
             }
           } else {
             currentInterim += transcript;
@@ -1336,17 +1493,28 @@ export default function LiveMeetingRoom() {
     const s = nowSec % 60;
     const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 
-    setSegments((prev) => [
-      ...prev,
-      {
-        id: Math.random().toString(36).substring(2, 9),
-        speaker: user?.full_name?.split(" ")[0] || "You",
-        text: manualInput.trim(),
-        timestamp: timeStr,
-        startTimeSec: Math.max(0, nowSec - 2),
-        endTimeSec: nowSec,
-      },
-    ]);
+    const newSegment: LiveSegment = {
+      id: Math.random().toString(36).substring(2, 9),
+      speaker: user?.full_name?.split(" ")[0] || (isHostRef.current ? "Host" : "Participant"),
+      text: manualInput.trim(),
+      timestamp: timeStr,
+      startTimeSec: Math.max(0, nowSec - 2),
+      endTimeSec: nowSec,
+    };
+
+    setSegments((prev) => [...prev, newSegment]);
+
+    if (signalingSocketRef.current && signalingSocketRef.current.readyState === WebSocket.OPEN) {
+      try {
+        signalingSocketRef.current.send(
+          JSON.stringify({
+            type: "live_transcript_segment",
+            segment: newSegment,
+          })
+        );
+      } catch {}
+    }
+
     setManualInput("");
   }
 
@@ -1362,7 +1530,7 @@ export default function LiveMeetingRoom() {
     setTimeout(() => setCopiedLink(false), 2500);
   }
 
-  // 8. End Meeting & Finalize Intelligence (Summary, Action Items, Decisions, Recording)
+  // 8. End Meeting & Finalize Intelligence (Host only - stops master recorder, broadcasts end, uploads 1 recording)
   async function handleEndAndSaveMeeting() {
     const targetId = meeting?.id || Number(meetingId);
     if (!targetId || isNaN(targetId)) {
@@ -1374,8 +1542,20 @@ export default function LiveMeetingRoom() {
     setIsSavingMeeting(true);
     setSaveProgressMessage("Shutting down camera & microphone...");
 
+    // 1. Broadcast to all participants that host ended the meeting
+    if (signalingSocketRef.current && signalingSocketRef.current.readyState === WebSocket.OPEN) {
+      try {
+        signalingSocketRef.current.send(
+          JSON.stringify({
+            type: "meeting_ended",
+            meetingId: targetId,
+          })
+        );
+      } catch {}
+    }
+
     try {
-      // 1. Stop recorder and capture final Blob
+      // 2. Stop recorder and capture final Blob
       let finalBlob: Blob | null = null;
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         const stopPromise = new Promise<Blob>((resolve) => {
@@ -1406,10 +1586,10 @@ export default function LiveMeetingRoom() {
         finalBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
       }
 
-      // 2. IMMEDIATELY SHUT DOWN ALL CAMERA & MICROPHONE HARDWARE
+      // 3. IMMEDIATELY SHUT DOWN ALL CAMERA & MICROPHONE HARDWARE
       releaseAllMediaDevices();
 
-      // 3. Upload recording file to this meeting
+      // 4. Upload the single whole-meeting master recording file
       if (finalBlob && finalBlob.size > 0) {
         const rawMime = finalBlob.type || "video/webm";
         const cleanMime = rawMime.split(";")[0].trim().toLowerCase() || "video/webm";
@@ -1417,7 +1597,7 @@ export default function LiveMeetingRoom() {
         const fileName = `meeting_${targetId}_recording_${Date.now()}.${ext}`;
         const recordingFile = new File([finalBlob], fileName, { type: cleanMime });
 
-        setSaveProgressMessage(`Uploading recording (${(recordingFile.size / (1024 * 1024)).toFixed(1)} MB)...`);
+        setSaveProgressMessage(`Uploading whole meeting recording (${(recordingFile.size / (1024 * 1024)).toFixed(1)} MB)...`);
         try {
           await uploadRecording(targetId, recordingFile);
         } catch (uploadErr) {
@@ -1425,7 +1605,7 @@ export default function LiveMeetingRoom() {
         }
       }
 
-      // 4. Save live speech transcripts to database if any were captured live
+      // 5. Save live speech transcripts to database if any were captured live
       if (segments.length > 0) {
         setSaveProgressMessage("Saving speech transcripts...");
         try {
@@ -1459,6 +1639,12 @@ export default function LiveMeetingRoom() {
     } finally {
       setIsSavingMeeting(false);
     }
+  }
+
+  // Guest Leave Function (Guest leaves cleanly, does NOT upload duplicate recording)
+  function handleLeaveMeeting() {
+    releaseAllMediaDevices();
+    navigate("/meetings");
   }
 
   // Format timer
@@ -1541,6 +1727,19 @@ export default function LiveMeetingRoom() {
         </div>
       )}
 
+      {/* Host Ended Meeting Notice for Guests */}
+      {hostEndedNotice && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 backdrop-blur-md text-white p-6 text-center">
+          <div className="flex flex-col items-center rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl max-w-md">
+            <PhoneOff className="h-12 w-12 text-red-400 mb-3 animate-pulse" />
+            <h3 className="text-lg font-bold text-white">The host has ended this meeting</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Opening the meeting workspace where the recording and intelligence are organized...
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Top Header Bar */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-800/80 bg-slate-900/90 px-5 backdrop-blur-sm">
         <div className="flex items-center gap-3">
@@ -1608,10 +1807,17 @@ export default function LiveMeetingRoom() {
         </div>
 
         {/* Center: Recording Status Badge */}
-        <div className="hidden sm:flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-400">
-          <span className={`h-2 w-2 rounded-full ${isRecording ? "bg-red-500 animate-ping" : "bg-slate-500"}`} />
-          {isRecording ? "REC LIVE • Recording in background" : "Preparing..."}
-        </div>
+        {isHost ? (
+          <div className="hidden sm:flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-400">
+            <span className={`h-2 w-2 rounded-full ${isRecording ? "bg-red-500 animate-ping" : "bg-slate-500"}`} />
+            {isRecording ? "REC LIVE • Recording whole meeting" : "Preparing Master Recording..."}
+          </div>
+        ) : (
+          <div className="hidden sm:flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/80 px-3 py-1 text-xs font-semibold text-slate-300">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            <span>Participant • Connected</span>
+          </div>
+        )}
 
         {/* Right Side: Invite Link & Drawer Toggle */}
         <div className="flex items-center gap-2">
@@ -1669,6 +1875,15 @@ export default function LiveMeetingRoom() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Video Grid Stage (Google Meet Layout) */}
         <div className="relative flex flex-1 flex-col items-center justify-center p-3 sm:p-5 bg-slate-950 overflow-hidden">
+          {/* Echo Prevention Helper Tip when testing multiple participants on same laptop */}
+          {totalParticipants > 1 && (
+            <div className="absolute top-4 z-20 flex items-center gap-2 rounded-full bg-slate-900/95 border border-indigo-500/50 px-3.5 py-1.5 text-xs text-slate-200 backdrop-blur-md shadow-2xl">
+              <Volume2 className="h-4 w-4 text-emerald-400 shrink-0" />
+              <span>
+                Testing on 1 laptop? <strong>Click &quot;Mute Speaker&quot; on the participant tile</strong> so your mic doesn&apos;t pick up the speaker audio. (The master recording still captures all voices!)
+              </span>
+            </div>
+          )}
           {/* Presentation Mode (Screen Share active) */}
           {isScreenSharing ? (
             <div className="relative flex h-full w-full flex-col lg:flex-row gap-4">
@@ -2130,15 +2345,26 @@ export default function LiveMeetingRoom() {
             <Subtitles className="h-5 w-5" />
           </button>
 
-          {/* End Call / Leave Meeting (Red button) */}
-          <button
-            onClick={handleEndAndSaveMeeting}
-            className="flex items-center gap-2 rounded-full bg-red-600 px-5 py-3 font-semibold text-white shadow-lg transition hover:bg-red-700 active:scale-95 cursor-pointer ml-2"
-            title="End Meeting and Finalize Intelligence"
-          >
-            <PhoneOff className="h-5 w-5" />
-            <span className="hidden sm:inline">End & Save Meeting</span>
-          </button>
+          {/* End Call / Leave Meeting */}
+          {isHost ? (
+            <button
+              onClick={handleEndAndSaveMeeting}
+              className="flex items-center gap-2 rounded-full bg-red-600 px-5 py-3 font-semibold text-white shadow-lg transition hover:bg-red-700 active:scale-95 cursor-pointer ml-2"
+              title="End Meeting for all & Save Master Recording"
+            >
+              <PhoneOff className="h-5 w-5" />
+              <span className="hidden sm:inline">End & Save Meeting</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleLeaveMeeting}
+              className="flex items-center gap-2 rounded-full bg-slate-800 border border-slate-700 px-5 py-3 font-semibold text-red-400 shadow-lg transition hover:bg-red-950/50 hover:text-red-300 active:scale-95 cursor-pointer ml-2"
+              title="Leave Room"
+            >
+              <PhoneOff className="h-5 w-5" />
+              <span className="hidden sm:inline">Leave Room</span>
+            </button>
+          )}
         </div>
 
         {/* Right: Drawer Button */}

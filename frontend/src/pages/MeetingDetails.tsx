@@ -13,11 +13,13 @@ import {
   Milestone,
   Play,
   Search,
+  Trash2,
   Upload,
   UserRound,
 } from "lucide-react";
 
 import {
+  deleteRecording,
   generateMeetingSummary,
   getMeeting,
   getMeetingInsights,
@@ -234,6 +236,21 @@ export default function MeetingDetails() {
     } finally {
       setUploading(false);
       e.target.value = "";
+    }
+  }
+
+  // Delete recording
+  async function handleDeleteRecording(recordingId: number) {
+    if (!window.confirm("Are you sure you want to delete this recording?")) return;
+    try {
+      await deleteRecording(id, recordingId);
+      setRecordings((prev) => prev.filter((r) => r.id !== recordingId));
+      if (activeRecordingId === recordingId) {
+        const remaining = recordings.filter((r) => r.id !== recordingId);
+        setActiveRecordingId(remaining[0]?.id || null);
+      }
+    } catch {
+      setError("Unable to delete recording.");
     }
   }
 
@@ -661,6 +678,14 @@ export default function MeetingDetails() {
                   >
                     <Play className="h-3 w-3 fill-indigo-600 dark:fill-indigo-400" />
                     Play
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteRecording(recording.id)}
+                    className="inline-flex items-center justify-center rounded-lg border border-slate-200 p-1 text-slate-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-slate-800 dark:hover:border-red-900/50 dark:hover:bg-red-950/40 dark:hover:text-red-400 transition cursor-pointer"
+                    title="Delete recording"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                   {recording.processing_status === "completed" && (
                     <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />

@@ -323,3 +323,50 @@ def stream_recording(
             "Content-Type": content_type,
         },
     )
+
+
+@router.delete(
+    "/{meeting_id}/recordings/{recording_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_recording(
+    meeting_id: int,
+    recording_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    meeting = db.scalar(
+        select(Meeting).where(
+            Meeting.id == meeting_id,
+        )
+    )
+    if meeting is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Meeting not found",
+        )
+
+    recording = db.scalar(
+        select(Recording).where(
+            Recording.id == recording_id,
+            Recording.meeting_id == meeting_id,
+        )
+    )
+    if recording is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recording not found",
+        )
+
+    # Clean up storage file if it exists
+    try:
+        audio_path = resolve_recording_path(recording.storage_key)
+        if audio_path.exists():
+            audio_path.unlink()
+    except Exception:
+        pass
+
+    db.delete(recording)
+    db.commit()
+    return None
+
