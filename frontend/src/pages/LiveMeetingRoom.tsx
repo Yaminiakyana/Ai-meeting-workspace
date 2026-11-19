@@ -247,12 +247,77 @@ export default function LiveMeetingRoom() {
   const [isSavingMeeting, setIsSavingMeeting] = useState(false);
   const [saveProgressMessage, setSaveProgressMessage] = useState("");
 
+  // Synchronized Meeting Clock across all participants
+  const meetingStartEpochMsRef = useRef<number>(Date.now());
+  const getMeetingElapsedSeconds = useCallback(() => {
+    return Math.max(0, Math.floor((Date.now() - meetingStartEpochMsRef.current) / 1000));
+  }, []);
+
+  // Shared Real-Time Caption State across all participants (Google Meet-style)
+  const [currentCaption, setCurrentCaption] = useState<{
+    speaker: string;
+    text: string;
+    isInterim: boolean;
+    timestamp: number;
+  } | null>(null);
+  const currentCaptionTimeoutRef = useRef<any>(null);
+
+  const showCaption = useCallback((speaker: string, text: string, isInterim: boolean) => {
+    const trimmed = text?.trim();
+    if (!trimmed) {
+      if (!isInterim) {
+        setCurrentCaption(null);
+      }
+      return;
+    }
+    setCurrentCaption({
+      speaker,
+      text: trimmed,
+      isInterim,
+      timestamp: Date.now(),
+    });
+
+    if (currentCaptionTimeoutRef.current) {
+      clearTimeout(currentCaptionTimeoutRef.current);
+    }
+    currentCaptionTimeoutRef.current = setTimeout(() => {
+      setCurrentCaption(null);
+    }, isInterim ? 6000 : 4500);
+  }, []);
+
   // Live Speech Recognition & Intelligence
   const speechRecognitionRef = useRef<any>(null);
   const isSpeechRunningRef = useRef<boolean>(false);
   const isMicOnRef = useRef<boolean>(true);
   const [interimText, setInterimText] = useState("");
   const [segments, setSegments] = useState<LiveSegment[]>([]);
+  const segmentsRef = useRef<LiveSegment[]>([]);
+  useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
+
+  // Chronologically strictly ordered and deduplicated segment management
+  const addOrMergeSegments = useCallback((incoming: LiveSegment | LiveSegment[]) => {
+    const list = Array.isArray(incoming) ? incoming : [incoming];
+    setSegments((prev) => {
+      const map = new Map<string, LiveSegment>();
+      prev.forEach((s) => map.set(s.id, s));
+      list.forEach((s) => {
+        if (s && s.text && s.text.trim()) {
+          map.set(s.id, s);
+        }
+      });
+      const merged = Array.from(map.values());
+      merged.sort((a, b) => {
+        if (a.startTimeSec !== b.startTimeSec) {
+          return a.startTimeSec - b.startTimeSec;
+        }
+        return a.endTimeSec - b.endTimeSec;
+      });
+      return merged;
+    });
+  }, []);
+
   const [actionItems, setActionItems] = useState<LiveActionItem[]>([]);
   const [decisions, setDecisions] = useState<LiveDecision[]>([]);
   const [isAnalyzingInsights, setIsAnalyzingInsights] = useState(false);
@@ -486,6 +551,12 @@ export default function LiveMeetingRoom() {
           if (active) {
             setMeeting(created);
             setTitleDraft(created.title);
+            if (created.created_at) {
+              const ms = new Date(created.created_at).getTime();
+              if (!isNaN(ms) && ms > 0) {
+                meetingStartEpochMsRef.current = ms;
+              }
+            }
             window.history.replaceState(null, "", `/meetings/${created.id}/room`);
           }
         } else {
@@ -497,6 +568,12 @@ export default function LiveMeetingRoom() {
           if (active) {
             setMeeting(existing);
             setTitleDraft(existing.title);
+            if (existing.created_at) {
+              const ms = new Date(existing.created_at).getTime();
+              if (!isNaN(ms) && ms > 0) {
+                meetingStartEpochMsRef.current = ms;
+              }
+            }
           }
         }
       } catch (err: any) {
@@ -757,6 +834,42 @@ export default function LiveMeetingRoom() {
           case "user_joined": {
             if (msg.peerId !== myPeerId.current) {
               await createPeerConnection(msg.peerId, msg.userName, false);
+
+              // Broadcast canonical meeting state (clock & history) to newly joined participant
+              if (ws.readyState === WebSocket.OPEN) {
+                try {
+                  ws.send(
+                    JSON.stringify({
+                      type: "meeting_state_sync",
+                      target: msg.peerId,
+                      meetingStartEpochMs: meetingStartEpochMsRef.current,
+                      segments: segmentsRef.current,
+                    })
+                  );
+                } catch {}
+              }
+            }
+            break;
+          }
+
+          case "meeting_state_sync": {
+            if (msg.target === myPeerId.current) {
+              if (typeof msg.meetingStartEpochMs === "number" && msg.meetingStartEpochMs > 0) {
+                meetingStartEpochMsRef.current = msg.meetingStartEpochMs;
+                const elapsed = Math.max(0, Math.floor((Date.now() - msg.meetingStartEpochMs) / 1000));
+                setRecordingSeconds(elapsed);
+                recordingSecondsRef.current = elapsed;
+              }
+              if (Array.isArray(msg.segments) && msg.segments.length > 0) {
+                addOrMergeSegments(msg.segments);
+              }
+            }
+            break;
+          }
+
+          case "live_caption_update": {
+            if (msg.sender !== myPeerId.current && msg.text) {
+              showCaption(msg.speaker || "Participant", msg.text, Boolean(msg.isInterim));
             }
             break;
           }
@@ -822,10 +935,7 @@ export default function LiveMeetingRoom() {
 
           case "live_transcript_segment": {
             if (msg.segment && msg.sender !== myPeerId.current) {
-              setSegments((prev) => {
-                if (prev.some((s) => s.id === msg.segment.id)) return prev;
-                return [...prev, msg.segment];
-              });
+              addOrMergeSegments(msg.segment);
             }
             break;
           }
@@ -1012,13 +1122,17 @@ export default function LiveMeetingRoom() {
     }
   }
 
-  // 5. Timer for live meeting duration
+  // 5. Timer for live meeting duration derived from canonical meeting start
   useEffect(() => {
-    const timer = setInterval(() => {
-      setRecordingSeconds((prev) => prev + 1);
-    }, 1000);
+    const updateTimer = () => {
+      const elapsed = getMeetingElapsedSeconds();
+      setRecordingSeconds(elapsed);
+      recordingSecondsRef.current = elapsed;
+    };
+    updateTimer();
+    const timer = setInterval(updateTimer, 500);
     return () => clearInterval(timer);
-  }, []);
+  }, [getMeetingElapsedSeconds]);
 
   // 6. Robust Continuous Background Speech Recognition
   useEffect(() => {
@@ -1029,13 +1143,39 @@ export default function LiveMeetingRoom() {
     setSpeechPermissionNotice(null);
     setIsCaptionsOn(true);
     isCaptionsOnRef.current = true;
-    if (speechRecognitionRef.current) {
+    if (speechRecognitionRef.current && !isSpeechRunningRef.current) {
       try {
         speechRecognitionRef.current.start();
       } catch (e) {
         console.warn("Manual speech start notice:", e);
       }
     }
+  }, []);
+
+  // Auto-activate or resume speech recognition on any user interaction gesture in this tab
+  useEffect(() => {
+    const handleUserGesture = () => {
+      if (
+        isCaptionsOnRef.current &&
+        isMicOnRef.current &&
+        !isMeetingEndedRef.current &&
+        speechRecognitionRef.current &&
+        !isSpeechRunningRef.current
+      ) {
+        try {
+          speechRecognitionRef.current.start();
+        } catch {}
+      }
+    };
+
+    window.addEventListener("pointerdown", handleUserGesture);
+    window.addEventListener("click", handleUserGesture);
+    window.addEventListener("keydown", handleUserGesture);
+    return () => {
+      window.removeEventListener("pointerdown", handleUserGesture);
+      window.removeEventListener("click", handleUserGesture);
+      window.removeEventListener("keydown", handleUserGesture);
+    };
   }, []);
 
   useEffect(() => {
@@ -1050,7 +1190,6 @@ export default function LiveMeetingRoom() {
     let isDisposed = false;
     let recognition: any = null;
     let consecutiveErrors = 0;
-    let isFatal = false;
 
     try {
       recognition = new SpeechRecognitionClass();
@@ -1064,40 +1203,50 @@ export default function LiveMeetingRoom() {
         setSpeechActive(true);
         setSpeechPermissionNotice(null);
         consecutiveErrors = 0;
-        isFatal = false;
       };
 
       recognition.onresult = (event: any) => {
         let currentInterim = "";
+        const mySpeakerName = user?.full_name?.split(" ")[0] || "Participant";
+
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const res = event.results[i];
           const transcript = res[0]?.transcript || "";
           if (res.isFinal) {
             const trimmed = transcript.trim();
             if (trimmed) {
-              const nowSec = recordingSecondsRef.current;
+              const nowSec = getMeetingElapsedSeconds();
               const m = Math.floor(nowSec / 60);
               const s = nowSec % 60;
               const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 
               const newSegment: LiveSegment = {
-                id: Math.random().toString(36).substring(2, 9),
-                speaker: user?.full_name?.split(" ")[0] || (isHostRef.current ? "Host" : "Participant"),
+                id: `seg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                speaker: mySpeakerName,
                 text: trimmed,
                 timestamp: timeStr,
                 startTimeSec: Math.max(0, nowSec - 4),
                 endTimeSec: nowSec,
               };
 
-              setSegments((prev) => [...prev, newSegment]);
+              addOrMergeSegments(newSegment);
+              showCaption(mySpeakerName, trimmed, false);
 
-              // Broadcast speech segment to all peers over WebSocket
+              // Broadcast speech segment and final caption to all peers over WebSocket
               if (signalingSocketRef.current && signalingSocketRef.current.readyState === WebSocket.OPEN) {
                 try {
                   signalingSocketRef.current.send(
                     JSON.stringify({
                       type: "live_transcript_segment",
                       segment: newSegment,
+                    })
+                  );
+                  signalingSocketRef.current.send(
+                    JSON.stringify({
+                      type: "live_caption_update",
+                      speaker: mySpeakerName,
+                      text: trimmed,
+                      isInterim: false,
                     })
                   );
                 } catch {}
@@ -1108,6 +1257,21 @@ export default function LiveMeetingRoom() {
           }
         }
         setInterimText(currentInterim);
+        if (currentInterim.trim()) {
+          showCaption(mySpeakerName, currentInterim, true);
+          if (signalingSocketRef.current && signalingSocketRef.current.readyState === WebSocket.OPEN) {
+            try {
+              signalingSocketRef.current.send(
+                JSON.stringify({
+                  type: "live_caption_update",
+                  speaker: mySpeakerName,
+                  text: currentInterim,
+                  isInterim: true,
+                })
+              );
+            } catch {}
+          }
+        }
       };
 
       recognition.onerror = (err: any) => {
@@ -1116,17 +1280,16 @@ export default function LiveMeetingRoom() {
         console.warn("Live speech recognition notice:", err.error);
 
         if (err.error === "not-allowed" || err.error === "service-not-allowed") {
-          isFatal = true;
           setSpeechActive(false);
           setSpeechPermissionNotice(
-            "Speech recognition requires permission. Click 'Enable Captions' to turn on real-time transcription."
+            "Speech recognition requires user gesture in this tab. Click 'Turn On Captions' or click anywhere in the window."
           );
         }
       };
 
       recognition.onend = () => {
         isSpeechRunningRef.current = false;
-        if (isDisposed || isFatal || isMeetingEndedRef.current || !isMicOnRef.current || !isCaptionsOnRef.current) {
+        if (isDisposed || isMeetingEndedRef.current || !isMicOnRef.current || !isCaptionsOnRef.current) {
           setSpeechActive(false);
           return;
         }
@@ -1137,7 +1300,7 @@ export default function LiveMeetingRoom() {
           clearTimeout(speechRestartTimerRef.current);
         }
         speechRestartTimerRef.current = setTimeout(() => {
-          if (!isDisposed && !isFatal && !isMeetingEndedRef.current && isMicOnRef.current && isCaptionsOnRef.current && !isSpeechRunningRef.current) {
+          if (!isDisposed && !isMeetingEndedRef.current && isMicOnRef.current && isCaptionsOnRef.current && !isSpeechRunningRef.current) {
             try {
               recognition.start();
             } catch {
@@ -1488,21 +1651,23 @@ export default function LiveMeetingRoom() {
     e.preventDefault();
     if (!manualInput.trim()) return;
 
-    const nowSec = recordingSecondsRef.current;
+    const nowSec = getMeetingElapsedSeconds();
     const m = Math.floor(nowSec / 60);
     const s = nowSec % 60;
     const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    const myName = user?.full_name?.split(" ")[0] || "Participant";
 
     const newSegment: LiveSegment = {
-      id: Math.random().toString(36).substring(2, 9),
-      speaker: user?.full_name?.split(" ")[0] || (isHostRef.current ? "Host" : "Participant"),
+      id: `seg_manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      speaker: myName,
       text: manualInput.trim(),
       timestamp: timeStr,
       startTimeSec: Math.max(0, nowSec - 2),
       endTimeSec: nowSec,
     };
 
-    setSegments((prev) => [...prev, newSegment]);
+    addOrMergeSegments(newSegment);
+    showCaption(myName, manualInput.trim(), false);
 
     if (signalingSocketRef.current && signalingSocketRef.current.readyState === WebSocket.OPEN) {
       try {
@@ -1510,6 +1675,14 @@ export default function LiveMeetingRoom() {
           JSON.stringify({
             type: "live_transcript_segment",
             segment: newSegment,
+          })
+        );
+        signalingSocketRef.current.send(
+          JSON.stringify({
+            type: "live_caption_update",
+            speaker: myName,
+            text: manualInput.trim(),
+            isInterim: false,
           })
         );
       } catch {}
@@ -1606,12 +1779,21 @@ export default function LiveMeetingRoom() {
       }
 
       // 5. Save live speech transcripts to database if any were captured live
-      if (segments.length > 0) {
+      const currentSegments = segmentsRef.current.length > 0 ? segmentsRef.current : segments;
+      if (currentSegments.length > 0) {
         setSaveProgressMessage("Saving speech transcripts...");
+        // Strictly sort chronologically by startTimeSec before persisting
+        const sortedSegments = [...currentSegments].sort((a, b) => {
+          if (a.startTimeSec !== b.startTimeSec) {
+            return a.startTimeSec - b.startTimeSec;
+          }
+          return a.endTimeSec - b.endTimeSec;
+        });
+
         try {
           await saveLiveTranscripts(
             targetId,
-            segments.map((s, idx) => ({
+            sortedSegments.map((s, idx) => ({
               text: s.text,
               speaker_label: s.speaker,
               speaker_name: s.speaker,
@@ -1969,7 +2151,7 @@ export default function LiveMeetingRoom() {
                       )}
                     </div>
                     <span className="mt-3 text-sm font-semibold text-slate-200">
-                      {user?.full_name || "You"} (Host)
+                      {user?.full_name || "You"}
                     </span>
                     <span className="mt-0.5 text-[11px] text-slate-500">Camera is off</span>
                   </div>
@@ -2011,17 +2193,29 @@ export default function LiveMeetingRoom() {
             </div>
           )}
 
-          {/* Real-time Floating Subtitles / Captions (Over video) */}
-          {isCaptionsOn && (interimText || (segments.length > 0 && segments[segments.length - 1])) && (
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 max-w-xl w-[90%] rounded-xl bg-black/85 px-4 py-2.5 text-center text-sm text-white backdrop-blur-md border border-white/10 shadow-xl pointer-events-none transition-all z-10">
-              <span className="font-semibold text-emerald-300">
-                {interimText
-                  ? `${user?.full_name?.split(" ")[0] || "You"}: `
-                  : `${segments[segments.length - 1]?.speaker}: `}
+          {/* Real-time Floating Subtitles / Captions (Over video - Google Meet style) */}
+          {isCaptionsOn && currentCaption && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 max-w-xl w-[90%] rounded-xl bg-black/85 px-5 py-3 text-center text-sm text-white backdrop-blur-md border border-emerald-500/30 shadow-2xl pointer-events-none transition-all z-20">
+              <span className="font-bold text-emerald-400 mr-2">
+                {currentCaption.speaker}:
               </span>
-              <span className="text-slate-100">
-                {interimText || segments[segments.length - 1]?.text}
+              <span className={`text-slate-100 font-medium ${currentCaption.isInterim ? "italic text-emerald-100/90" : ""}`}>
+                {currentCaption.text}{currentCaption.isInterim ? "..." : ""}
               </span>
+            </div>
+          )}
+
+          {/* Floating User-Gesture Captions Activation Pill if browser blocked speech recognition autoplay */}
+          {speechPermissionNotice && isCaptionsOn && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 rounded-full bg-amber-500 text-slate-950 px-4 py-2 text-xs font-bold shadow-2xl backdrop-blur-md">
+              <Subtitles className="h-4 w-4 shrink-0" />
+              <span>Click to activate live captions</span>
+              <button
+                onClick={startCaptionsWithUserGesture}
+                className="ml-1 rounded-full bg-slate-950 text-white px-3 py-1 text-xs font-extrabold hover:bg-slate-800 transition cursor-pointer"
+              >
+                Turn On
+              </button>
             </div>
           )}
         </div>
@@ -2138,13 +2332,13 @@ export default function LiveMeetingRoom() {
                     </div>
                   ))}
 
-                  {/* Real-time interim preview */}
-                  {interimText && (
+                  {/* Real-time interim preview from active speaker */}
+                  {currentCaption && currentCaption.isInterim && (
                     <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-3 text-xs italic text-emerald-200 animate-pulse">
                       <span className="font-bold text-emerald-400 not-italic mr-1.5">
-                        {user?.full_name?.split(" ")[0] || "You"}:
+                        {currentCaption.speaker}:
                       </span>
-                      {interimText}...
+                      {currentCaption.text}...
                     </div>
                   )}
                 </div>

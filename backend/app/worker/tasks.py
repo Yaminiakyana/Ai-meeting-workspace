@@ -723,16 +723,32 @@ def process_recording(self, recording_id: int = None):
         # ----------------------------------------------------
         # 7. Save transcript to database
         # ----------------------------------------------------
-        delete_existing_transcript(
-            db,
-            recording.id,
-        )
+        # Check if live transcripts with real participant speaker names already exist
+        existing_live_transcripts = db.scalars(
+            select(Transcript).where(
+                Transcript.meeting_id == recording.meeting_id,
+                Transcript.recording_id.is_(None),
+            )
+        ).all()
 
-        save_transcript_segments(
-            db,
-            recording,
-            stabilized_segments,
-        )
+        if existing_live_transcripts and len(existing_live_transcripts) > 0:
+            print(
+                f"Meeting {recording.meeting_id} already has {len(existing_live_transcripts)} live transcripts "
+                f"with authenticated participant names. Associating with recording {recording.id} to avoid duplicate transcription."
+            )
+            for lt in existing_live_transcripts:
+                lt.recording_id = recording.id
+            db.commit()
+        else:
+            delete_existing_transcript(
+                db,
+                recording.id,
+            )
+            save_transcript_segments(
+                db,
+                recording,
+                stabilized_segments,
+            )
 
         # ----------------------------------------------------
         # 7.5. Generate meeting summary & RAG index

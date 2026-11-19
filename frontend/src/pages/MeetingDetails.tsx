@@ -161,7 +161,10 @@ export default function MeetingDetails() {
       ]);
 
       setRecordings(recordingsRes || []);
-      setTranscript(transcriptRes || []);
+      const sortedTrans = (transcriptRes || []).sort(
+        (a, b) => (a.start_time ?? 0) - (b.start_time ?? 0) || (a.sequence_number ?? 0) - (b.sequence_number ?? 0)
+      );
+      setTranscript(sortedTrans);
 
       if (recordingsRes && recordingsRes.length > 0 && !activeRecordingId) {
         setActiveRecordingId(recordingsRes[0].id);
@@ -206,7 +209,10 @@ export default function MeetingDetails() {
         ]);
         setRecordings(recs);
         if (trans && trans.length > 0) {
-          setTranscript(trans);
+          const sorted = [...trans].sort(
+            (a, b) => (a.start_time ?? 0) - (b.start_time ?? 0) || (a.sequence_number ?? 0) - (b.sequence_number ?? 0)
+          );
+          setTranscript(sorted);
         }
         if (insights) {
           if (insights.summary) setSummary(insights.summary);

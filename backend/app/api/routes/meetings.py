@@ -255,8 +255,17 @@ def save_live_transcript_batch(
     """
     meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
+    # Sort incoming segments strictly chronologically by start_time
+    sorted_segments = sorted(request.segments, key=lambda s: float(s.start_time or 0.0))
+
+    # Remove any unattached prior live transcripts for this meeting to avoid duplicates
+    db.query(Transcript).filter(
+        Transcript.meeting_id == meeting.id,
+        Transcript.recording_id.is_(None),
+    ).delete(synchronize_session=False)
+
     saved_count = 0
-    for idx, seg in enumerate(request.segments):
+    for idx, seg in enumerate(sorted_segments):
         text = seg.text.strip()
         if not text:
             continue
@@ -264,11 +273,11 @@ def save_live_transcript_batch(
             meeting_id=meeting.id,
             recording_id=None,
             speaker_label=seg.speaker_label or "Speaker",
-            speaker_name=seg.speaker_name,
+            speaker_name=seg.speaker_name or seg.speaker_label,
             text=text,
-            start_time=seg.start_time,
-            end_time=seg.end_time,
-            sequence_number=seg.sequence_number or (idx + 1),
+            start_time=float(seg.start_time or 0.0),
+            end_time=float(seg.end_time or (seg.start_time or 0.0) + 2.0),
+            sequence_number=idx + 1,
         )
         db.add(transcript)
         saved_count += 1

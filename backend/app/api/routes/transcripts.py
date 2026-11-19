@@ -28,14 +28,28 @@ def get_transcript(
 ):
     meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
-    transcripts = db.scalars(
-        select(Transcript)
-        .where(
-            Transcript.meeting_id == meeting_id
-        )
-        .order_by(
-            Transcript.sequence_number.asc()
-        )
-    ).all()
+    all_transcripts = list(
+        db.scalars(
+            select(Transcript)
+            .where(
+                Transcript.meeting_id == meeting_id
+            )
+            .order_by(
+                Transcript.start_time.asc(),
+                Transcript.sequence_number.asc(),
+                Transcript.id.asc(),
+            )
+        ).all()
+    )
 
-    return transcripts
+    # If both live transcripts (recording_id is None) and Whisper transcripts (recording_id is not None) exist,
+    # prioritize live transcripts that have real participant speaker names.
+    live_ones = [t for t in all_transcripts if t.recording_id is None]
+    rec_ones = [t for t in all_transcripts if t.recording_id is not None]
+
+    if live_ones and rec_ones:
+        return sorted(live_ones, key=lambda t: (t.start_time or 0.0, t.sequence_number or 0, t.id or 0))
+    elif live_ones:
+        return sorted(live_ones, key=lambda t: (t.start_time or 0.0, t.sequence_number or 0, t.id or 0))
+    else:
+        return sorted(rec_ones, key=lambda t: (t.start_time or 0.0, t.sequence_number or 0, t.id or 0))
