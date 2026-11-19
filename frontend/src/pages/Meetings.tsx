@@ -323,20 +323,9 @@ export default function Meetings() {
               >
                 <div>
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">
-                        ID #{meeting.id}
-                      </span>
-                      {meeting.owner_id === user?.id ? (
-                        <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                          Host
-                        </span>
-                      ) : (
-                        <span className="rounded-md bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-500/10 dark:text-purple-400">
-                          Attended
-                        </span>
-                      )}
-                    </div>
+                    <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">
+                      ID #{meeting.id}
+                    </span>
                     <span className="text-[11px] font-medium capitalize text-slate-500 dark:text-slate-400">
                       {meeting.status.replace("_", " ")}
                     </span>
