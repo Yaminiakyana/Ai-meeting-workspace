@@ -7,11 +7,12 @@ import re
 from typing import Any
 
 import numpy as np
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.meeting import Meeting
+from app.models.meeting_participant import MeetingParticipant
 from app.models.transcript import Transcript
 from app.models.transcript_chunk import TranscriptChunk
 
@@ -185,10 +186,24 @@ def search_meeting_chunks(
         select(TranscriptChunk, Meeting)
         .join(Meeting, TranscriptChunk.meeting_id == Meeting.id)
     )
+    user_participated_meeting_ids = select(MeetingParticipant.meeting_id).where(
+        MeetingParticipant.user_id == user_id
+    )
     if meeting_id is not None:
-        stmt = stmt.where(TranscriptChunk.meeting_id == meeting_id)
+        stmt = stmt.where(
+            TranscriptChunk.meeting_id == meeting_id,
+            or_(
+                Meeting.owner_id == user_id,
+                Meeting.id.in_(user_participated_meeting_ids),
+            ),
+        )
     else:
-        stmt = stmt.where(Meeting.owner_id == user_id)
+        stmt = stmt.where(
+            or_(
+                Meeting.owner_id == user_id,
+                Meeting.id.in_(user_participated_meeting_ids),
+            )
+        )
 
     records = db.execute(stmt).all()
     if not records:

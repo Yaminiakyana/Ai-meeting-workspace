@@ -148,6 +148,11 @@ export async function getMeeting(meetingId: number): Promise<Meeting> {
   return response.data;
 }
 
+export async function joinMeeting(meetingId: number): Promise<Meeting> {
+  const response = await apiClient.post<Meeting>(`/meetings/${meetingId}/join`);
+  return response.data;
+}
+
 export async function createMeeting(data: CreateMeetingRequest): Promise<Meeting> {
   const response = await apiClient.post<Meeting>("/meetings", data);
   return response.data;

@@ -18,6 +18,7 @@ import jwt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_accessible_meeting
 from app.core.security import decode_access_token, get_current_user
 from app.db.database import get_db
 from app.models.meeting import Meeting
@@ -64,17 +65,7 @@ async def upload_recording(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     if not file.filename:
         raise HTTPException(
@@ -171,17 +162,7 @@ def list_recordings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     recordings = db.scalars(
         select(Recording)
@@ -229,16 +210,7 @@ def stream_recording(
             detail="Authentication required to stream recording",
         )
 
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, user_id)
 
     recording = db.scalar(
         select(Recording).where(
@@ -338,12 +310,13 @@ def delete_recording(
     meeting = db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id,
         )
     )
     if meeting is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
+            detail="Meeting not found or you are not the meeting host.",
         )
 
     recording = db.scalar(

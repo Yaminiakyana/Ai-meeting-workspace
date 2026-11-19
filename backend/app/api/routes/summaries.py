@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_accessible_meeting
 from app.core.security import get_current_user
 from app.db.database import get_db
 from app.models.action_item import ActionItem
 from app.models.decision import Decision
 from app.models.meeting import Meeting
+from app.models.meeting_participant import MeetingParticipant
 from app.models.meeting_summary import MeetingSummary
 from app.models.user import User
 from app.schemas.meeting_summary import (
@@ -41,16 +43,7 @@ def generate_summary_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     try:
         insights = generate_meeting_insights(
@@ -86,16 +79,7 @@ def get_meeting_insights(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     summary = db.scalar(
         select(MeetingSummary).where(MeetingSummary.meeting_id == meeting_id)
@@ -127,16 +111,7 @@ def get_summary(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     summary = db.scalar(
         select(MeetingSummary).where(MeetingSummary.meeting_id == meeting_id)
@@ -159,16 +134,7 @@ def get_action_items(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     return db.scalars(
         select(ActionItem)
@@ -188,16 +154,7 @@ def update_action_item(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     item = db.scalar(
         select(ActionItem).where(
@@ -229,16 +186,7 @@ def get_decisions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     return db.scalars(
         select(Decision)
@@ -257,16 +205,7 @@ def generate_email_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     summary = db.scalar(
         select(MeetingSummary).where(MeetingSummary.meeting_id == meeting_id)
@@ -304,10 +243,20 @@ def list_all_action_items(
     db: Session = Depends(get_db),
 ):
     """
-    Centralized repository of action items across all user meetings.
+    Centralized repository of action items across meetings owned or attended by current_user.
     """
+    user_participated_meeting_ids = select(MeetingParticipant.meeting_id).where(
+        MeetingParticipant.user_id == current_user.id
+    )
+
     return db.scalars(
         select(ActionItem)
         .join(Meeting, ActionItem.meeting_id == Meeting.id)
+        .where(
+            or_(
+                Meeting.owner_id == current_user.id,
+                Meeting.id.in_(user_participated_meeting_ids),
+            )
+        )
         .order_by(ActionItem.created_at.desc())
     ).all()

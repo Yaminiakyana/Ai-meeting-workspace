@@ -29,7 +29,7 @@ import {
   createMeeting,
   generateMeetingSummary,
   getLiveInsights,
-  getMeeting,
+  joinMeeting,
   saveLiveTranscripts,
   updateMeeting,
   uploadRecording,
@@ -493,7 +493,7 @@ export default function LiveMeetingRoom() {
           if (isNaN(numericId)) {
             throw new Error("Invalid meeting ID");
           }
-          const existing = await getMeeting(numericId);
+          const existing = await joinMeeting(numericId);
           if (active) {
             setMeeting(existing);
             setTitleDraft(existing.title);

@@ -295,9 +295,20 @@ export default function WorkspaceDashboard() {
                   className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs transition hover:border-indigo-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">
-                      ID #{m.id}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">
+                        ID #{m.id}
+                      </span>
+                      {m.owner_id === user?.id ? (
+                        <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+                          Host
+                        </span>
+                      ) : (
+                        <span className="rounded-md bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-500/10 dark:text-purple-400">
+                          Attended
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[11px] font-medium capitalize text-slate-500 dark:text-slate-400">
                       {m.status.replace("_", " ")}
                     </span>

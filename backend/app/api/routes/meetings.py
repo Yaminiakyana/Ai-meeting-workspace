@@ -1,12 +1,15 @@
+from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_accessible_meeting
 from app.core.security import get_current_user
 from app.db.database import get_db
 from app.models.meeting import Meeting
+from app.models.meeting_participant import MeetingParticipant
 from app.models.transcript import Transcript
 from app.models.user import User
 from app.schemas.meeting import (
@@ -73,10 +76,22 @@ def list_meetings(
     db: Session = Depends(get_db),
 ):
     """
-    List all accessible meetings in the workspace, newest first.
+    List all accessible meetings for current_user:
+    - Meetings launched/created by current_user (owner)
+    - Meetings current_user joined as an attendee/participant
     """
+    user_participated_meeting_ids = select(MeetingParticipant.meeting_id).where(
+        MeetingParticipant.user_id == current_user.id
+    )
+
     meetings = db.scalars(
         select(Meeting)
+        .where(
+            or_(
+                Meeting.owner_id == current_user.id,
+                Meeting.id.in_(user_participated_meeting_ids),
+            )
+        )
         .order_by(Meeting.created_at.desc())
     ).all()
 
@@ -91,17 +106,51 @@ def get_meeting(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
+    return get_accessible_meeting(db, meeting_id, current_user.id)
 
+@router.post(
+    "/{meeting_id}/join",
+    response_model=MeetingResponse,
+)
+def join_meeting(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Register the current user as an attendee/participant of the meeting and return the meeting.
+    """
+    meeting = db.scalar(
+        select(Meeting).where(Meeting.id == meeting_id)
+    )
     if meeting is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Meeting not found",
         )
+
+    # If current user is not the owner, ensure they are registered in meeting_participants
+    if meeting.owner_id != current_user.id:
+        participant = db.scalar(
+            select(MeetingParticipant).where(
+                MeetingParticipant.meeting_id == meeting_id,
+                MeetingParticipant.user_id == current_user.id,
+            )
+        )
+        display_name = current_user.full_name or current_user.email.split("@")[0]
+        if participant is None:
+            participant = MeetingParticipant(
+                meeting_id=meeting.id,
+                user_id=current_user.id,
+                display_name=display_name,
+                email=current_user.email,
+                joined_at=datetime.utcnow(),
+            )
+            db.add(participant)
+            db.commit()
+        else:
+            participant.joined_at = datetime.utcnow()
+            db.commit()
 
     return meeting
 
@@ -181,17 +230,7 @@ def generate_live_insights(
     """
     Extract real-time action items and decisions from live meeting speech.
     """
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     title = request.meeting_title or meeting.title
     insights = extract_live_insights(
@@ -214,17 +253,7 @@ def save_live_transcript_batch(
     """
     Save streaming/live transcript segments generated during a live meeting session.
     """
-    meeting = db.scalar(
-        select(Meeting).where(
-            Meeting.id == meeting_id,
-        )
-    )
-
-    if meeting is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meeting not found",
-        )
+    meeting = get_accessible_meeting(db, meeting_id, current_user.id)
 
     saved_count = 0
     for idx, seg in enumerate(request.segments):
