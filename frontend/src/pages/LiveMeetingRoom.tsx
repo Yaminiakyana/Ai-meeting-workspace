@@ -247,10 +247,26 @@ export default function LiveMeetingRoom() {
   const [isSavingMeeting, setIsSavingMeeting] = useState(false);
   const [saveProgressMessage, setSaveProgressMessage] = useState("");
 
-  // Synchronized Meeting Clock across all participants
+  // Synchronized Meeting Clock across all participants (starts strictly from 0 seconds)
   const meetingStartEpochMsRef = useRef<number>(Date.now());
   const getMeetingElapsedSeconds = useCallback(() => {
     return Math.max(0, Math.floor((Date.now() - meetingStartEpochMsRef.current) / 1000));
+  }, []);
+
+  // Safe parser for server UTC dates that prevents timezone skew (+5:30 IST = +330m)
+  const parseServerDateSafe = useCallback((dateStr?: string | null): number | null => {
+    if (!dateStr) return null;
+    const s = dateStr.trim().replace(" ", "T");
+    const hasTimezone = s.endsWith("Z") || /[+-]\d{2}(:\d{2})?$/.test(s);
+    const normalized = hasTimezone ? s : `${s}Z`;
+    const parsed = new Date(normalized).getTime();
+    if (isNaN(parsed)) return null;
+    const ageMs = Date.now() - parsed;
+    // Only accept server timestamp if it was created within the last 15 minutes
+    if (ageMs >= 0 && ageMs < 15 * 60 * 1000) {
+      return parsed;
+    }
+    return null;
   }, []);
 
   // Shared Real-Time Caption State across all participants (Google Meet-style)
@@ -551,12 +567,8 @@ export default function LiveMeetingRoom() {
           if (active) {
             setMeeting(created);
             setTitleDraft(created.title);
-            if (created.created_at) {
-              const ms = new Date(created.created_at).getTime();
-              if (!isNaN(ms) && ms > 0) {
-                meetingStartEpochMsRef.current = ms;
-              }
-            }
+            const safeStart = parseServerDateSafe(created.created_at);
+            meetingStartEpochMsRef.current = safeStart || Date.now();
             window.history.replaceState(null, "", `/meetings/${created.id}/room`);
           }
         } else {
@@ -568,11 +580,9 @@ export default function LiveMeetingRoom() {
           if (active) {
             setMeeting(existing);
             setTitleDraft(existing.title);
-            if (existing.created_at) {
-              const ms = new Date(existing.created_at).getTime();
-              if (!isNaN(ms) && ms > 0) {
-                meetingStartEpochMsRef.current = ms;
-              }
+            const safeStart = parseServerDateSafe(existing.created_at);
+            if (safeStart) {
+              meetingStartEpochMsRef.current = safeStart;
             }
           }
         }
@@ -1790,17 +1800,25 @@ export default function LiveMeetingRoom() {
           return a.endTimeSec - b.endTimeSec;
         });
 
+        // Ensure transcripts always start cleanly from 0 seconds
+        const firstStart = sortedSegments[0]?.startTimeSec ?? 0;
+        const initialOffset = firstStart > 10 ? firstStart : 0;
+
         try {
           await saveLiveTranscripts(
             targetId,
-            sortedSegments.map((s, idx) => ({
-              text: s.text,
-              speaker_label: s.speaker,
-              speaker_name: s.speaker,
-              start_time: s.startTimeSec,
-              end_time: s.endTimeSec,
-              sequence_number: idx + 1,
-            }))
+            sortedSegments.map((s, idx) => {
+              const start = Math.max(0, s.startTimeSec - initialOffset);
+              const duration = Math.max(1, s.endTimeSec - s.startTimeSec);
+              return {
+                text: s.text,
+                speaker_label: s.speaker,
+                speaker_name: s.speaker,
+                start_time: Math.round(start * 10) / 10,
+                end_time: Math.round((start + duration) * 10) / 10,
+                sequence_number: idx + 1,
+              };
+            })
           );
         } catch (transcriptErr) {
           console.warn("Live transcript save notice:", transcriptErr);

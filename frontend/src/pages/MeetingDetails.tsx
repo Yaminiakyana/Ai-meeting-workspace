@@ -161,9 +161,17 @@ export default function MeetingDetails() {
       ]);
 
       setRecordings(recordingsRes || []);
-      const sortedTrans = (transcriptRes || []).sort(
+      let sortedTrans = (transcriptRes || []).sort(
         (a, b) => (a.start_time ?? 0) - (b.start_time ?? 0) || (a.sequence_number ?? 0) - (b.sequence_number ?? 0)
       );
+      if (sortedTrans.length > 0 && (sortedTrans[0].start_time ?? 0) > 10) {
+        const offset = sortedTrans[0].start_time ?? 0;
+        sortedTrans = sortedTrans.map((s) => ({
+          ...s,
+          start_time: Math.max(0, Math.round(((s.start_time ?? 0) - offset) * 10) / 10),
+          end_time: Math.max(1, Math.round(((s.end_time ?? 0) - offset) * 10) / 10),
+        }));
+      }
       setTranscript(sortedTrans);
 
       if (recordingsRes && recordingsRes.length > 0 && !activeRecordingId) {
@@ -209,9 +217,17 @@ export default function MeetingDetails() {
         ]);
         setRecordings(recs);
         if (trans && trans.length > 0) {
-          const sorted = [...trans].sort(
+          let sorted = [...trans].sort(
             (a, b) => (a.start_time ?? 0) - (b.start_time ?? 0) || (a.sequence_number ?? 0) - (b.sequence_number ?? 0)
           );
+          if (sorted.length > 0 && (sorted[0].start_time ?? 0) > 10) {
+            const offset = sorted[0].start_time ?? 0;
+            sorted = sorted.map((s) => ({
+              ...s,
+              start_time: Math.max(0, Math.round(((s.start_time ?? 0) - offset) * 10) / 10),
+              end_time: Math.max(1, Math.round(((s.end_time ?? 0) - offset) * 10) / 10),
+            }));
+          }
           setTranscript(sorted);
         }
         if (insights) {

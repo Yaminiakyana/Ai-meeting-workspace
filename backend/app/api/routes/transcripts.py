@@ -47,9 +47,16 @@ def get_transcript(
     live_ones = [t for t in all_transcripts if t.recording_id is None]
     rec_ones = [t for t in all_transcripts if t.recording_id is not None]
 
-    if live_ones and rec_ones:
-        return sorted(live_ones, key=lambda t: (t.start_time or 0.0, t.sequence_number or 0, t.id or 0))
-    elif live_ones:
-        return sorted(live_ones, key=lambda t: (t.start_time or 0.0, t.sequence_number or 0, t.id or 0))
-    else:
-        return sorted(rec_ones, key=lambda t: (t.start_time or 0.0, t.sequence_number or 0, t.id or 0))
+    selected = live_ones if live_ones else rec_ones
+    sorted_res = sorted(selected, key=lambda t: (t.start_time or 0.0, t.sequence_number or 0, t.id or 0))
+
+    # Guard: Ensure transcripts always start cleanly from 0.0s (e.g. if recorded with an offset or timezone skew)
+    if sorted_res and (sorted_res[0].start_time or 0.0) > 10.0:
+        offset = float(sorted_res[0].start_time or 0.0)
+        for t in sorted_res:
+            raw_start = float(t.start_time or 0.0)
+            raw_end = float(t.end_time or (raw_start + 2.0))
+            t.start_time = max(0.0, round(raw_start - offset, 2))
+            t.end_time = max(t.start_time + 1.0, round(raw_end - offset, 2))
+
+    return sorted_res

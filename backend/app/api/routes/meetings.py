@@ -264,19 +264,29 @@ def save_live_transcript_batch(
         Transcript.recording_id.is_(None),
     ).delete(synchronize_session=False)
 
+    # Ensure transcripts start from 0 seconds (normalize if there was a large initial offset or clock skew)
+    time_offset = 0.0
+    if sorted_segments and float(sorted_segments[0].start_time or 0.0) > 10.0:
+        time_offset = float(sorted_segments[0].start_time or 0.0)
+
     saved_count = 0
     for idx, seg in enumerate(sorted_segments):
         text = seg.text.strip()
         if not text:
             continue
+        raw_start = float(seg.start_time or 0.0)
+        raw_end = float(seg.end_time or (raw_start + 2.0))
+        norm_start = max(0.0, raw_start - time_offset)
+        norm_end = max(norm_start + 1.0, raw_end - time_offset)
+
         transcript = Transcript(
             meeting_id=meeting.id,
             recording_id=None,
             speaker_label=seg.speaker_label or "Speaker",
             speaker_name=seg.speaker_name or seg.speaker_label,
             text=text,
-            start_time=float(seg.start_time or 0.0),
-            end_time=float(seg.end_time or (seg.start_time or 0.0) + 2.0),
+            start_time=round(norm_start, 2),
+            end_time=round(norm_end, 2),
             sequence_number=idx + 1,
         )
         db.add(transcript)
