@@ -1,12 +1,14 @@
 # AI Meeting Workspace
 
 <p align="center">
-  <strong>End-to-End AI-Powered Meeting Intelligence, Speaker Diarization, Summarization & Cross-Meeting RAG Assistant</strong>
+  <strong>End-to-End AI-Powered Meeting Intelligence, Live WebRTC Video Conferencing, Speaker Diarization, Real-Time Speech-to-Text & Cross-Meeting RAG Assistant</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11" />
   <img src="https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/WebRTC-Native%20Mesh-333333?logo=webrtc&logoColor=white" alt="WebRTC" />
+  <img src="https://img.shields.io/badge/WebSockets-FastAPI-009688?logo=fastapi&logoColor=white" alt="WebSockets" />
   <img src="https://img.shields.io/badge/Celery-5.6-37814A?logo=celery&logoColor=white" alt="Celery" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/TailwindCSS-v4-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS v4" />
@@ -20,68 +22,109 @@
 
 ## 📖 Overview
 
-**AI Meeting Workspace** is an end-to-end meeting intelligence platform that transforms raw audio and video recordings into searchable, actionable knowledge. The system transcribes audio using OpenAI Whisper, separates different voices using Pyannote speaker diarization, generates structured AI summaries and action items, and organizes everything into an interactive meeting workspace.
+**AI Meeting Workspace** is a modern, end-to-end meeting intelligence and live collaboration platform. It offers both a **full-featured Google Meet-style live video conferencing room** and an **asynchronous recording intelligence pipeline**. 
 
-Users can interact with a **RAG-based AI Meeting Assistant** to ask natural-language questions across individual meetings or hundreds of past meetings. Every response cites exact `[MM:SS]` timestamps, and clicking any citation immediately jumps playback to that exact second in the recording with synchronized transcript auto-highlighting.
+With AI Meeting Workspace, you can launch instant live meetings, collaborate with video, audio, and screen sharing, read live floating speech subtitles, and automatically capture mixed master recordings. Once a meeting ends or an audio/video recording is uploaded, the platform transcribes speech, attributes voices with diarization, extracts executive summaries, action items, and strategic decisions, and organizes everything into an interactive meeting cockpit.
 
-### Dual User Experience:
-* **🔥 Try Without Account (Guest Mode)**: Instant zero-setup ephemeral trial. All meeting uploads, transcripts, summaries, and chat occur in an isolated session that vanishes upon exit.
-* **🛡️ Permanent Account**: Secure user registration and authentication where recordings, transcripts, summaries, action items, and vector embeddings are stored permanently in PostgreSQL.
+Users can also query their entire meeting history with a **Conversational RAG Meeting Assistant**, where every cited answer links to exact `[MM:SS]` timestamps that jump audio/video playback and highlight transcripts in real time.
+
+### 🌟 Core Experience Modes:
+* **🎥 Google Meet-Style Live Meeting Rooms**: Launch an instant live room with camera, microphone, and screen share. Invite team members with a 1-click link. View real-time floating captions as words are spoken, track live action items, and record the entire call in the browser. When the meeting ends, hardware turns off automatically, and the workspace opens with complete transcripts, AI summaries, action items, and decisions already organized!
+* **📁 Audio/Video Upload & Deep AI Analysis**: Upload pre-recorded files (`.mp3`, `.wav`, `.m4a`, `.mp4`, `.webm`, `.mov`). Asynchronous Celery workers transcribe with OpenAI Whisper and cluster voices with Pyannote speaker diarization.
+* **🛡️ Secure Per-User Meeting Isolation**: Robust multi-user authentication ensures individuals only access meetings they launched or attended via invite link.
+* **🔥 Ephemeral Guest Mode (Try Without Account)**: 1-click zero-setup trial session that runs in complete isolation and wipes upon session exit.
 
 ---
 
 ## ⚡ Architecture Pipeline
 
 ```text
-Meeting Recording (MP3 / WAV / M4A / MP4 / MOV)
-       │
-       ▼
-Audio Validation & Storage (FastAPI)
-       │
-       ▼
-Asynchronous Celery Worker (Redis Broker)
- ├── Speech-to-Text Transcription (Whisper Base / Word-Level Timestamps)
- ├── Speaker Diarization & Voice Clustering (Pyannote Community-1)
- └── Timestamp Alignment & Speaker Stabilization
-       │
-       ▼
-Structured Meeting Intelligence Engine
- ├── Executive Summary & Thematic Discussion Points (Gemini / OpenAI / NLP Fallback)
- ├── Action Item Extraction (Tasks, Owners, Priorities, Deadlines)
- ├── Decision Tracking (Key Architectural Choices & Agreements)
- └── Personalized Follow-Up Email Generation
-       │
-       ▼
-Vector Indexing & RAG Retrieval
- ├── Semantic Text Chunking & Embeddings (Gemini / OpenAI / TF-IDF Vector Space)
- └── Cross-Meeting Conversational RAG Assistant with Timestamp Citations
-       │
-       ▼
-Interactive Frontend (React 19, Vite, Tailwind CSS v4)
- ├── Synchronized Audio Player Bar (Range Requests / Partial Content HTTP 206)
- ├── Real-Time Transcript Highlighting & Jump-to-Time Navigation
- └── Light & Dark Mode Theming
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                LIVE COLLABORATION STAGE                                │
+│                                                                                        │
+│  Host & Participants (React 19 / WebRTC Mesh)                                          │
+│   ├── Video / Audio Tracks + Screen Share                                              │
+│   ├── WebSocket Signaling Server (FastAPI /api/ws/meetings/{id})                       │
+│   ├── Continuous Browser Speech Recognition & Multi-Peer Floating Subtitles Broadcast  │
+│   ├── Synchronized Canonical Meeting Clock (Zero-Skew Timestamps)                      │
+│   ├── Web Audio API Master Audio Mixer (Host Combines Local + Remote Voice Feeds)       │
+│   └── In-Browser MediaRecorder (Single Canonical Whole-Meeting Master Recording)         │
+└──────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                           │
+                           Meeting Ended / Upload Initiated
+                                           │
+                                           ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              BACKEND INGESTION & WORKERS                               │
+│                                                                                        │
+│  FastAPI API Server (/api/meetings/{id}/recordings, /api/meetings/{id}/transcripts)    │
+│   ├── Live Transcripts Batch Ingestion & Chronological Deduplication                   │
+│   ├── HTTP 206 Partial Content Audio Streaming Range Server                            │
+│   └── Multi-Tenant Database Storage (PostgreSQL 16)                                    │
+│                                           │                                            │
+│                                           ▼                                            │
+│  Asynchronous Celery Worker (Redis Broker / Solo Worker Pool)                          │
+│   ├── Speech-to-Text Transcription (Whisper Base / Word-Level Timestamps)              │
+│   ├── Speaker Diarization & Voice Clustering (Pyannote Community-1)                    │
+│   └── Timestamp Alignment & Speaker Stabilization                                      │
+└──────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                           │
+                                           ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                         MEETING INTELLIGENCE & RAG ENGINE                              │
+│                                                                                        │
+│  Structured Intelligence (Gemini / OpenAI / Heuristic NLP Engine)                      │
+│   ├── Executive Brief & Thematic Key Discussion Points                                 │
+│   ├── Action Item Extraction (Tasks, Owners, Priorities, Deadlines)                    │
+│   ├── Strategic Decision Log (Agreements & Consensus)                                  │
+│   └── AI Follow-Up Email Generator                                                     │
+│                                           │                                            │
+│  Vector Search & Conversational RAG Assistant                                          │
+│   ├── Semantic Chunking & Vector Space Indexing                                        │
+│   └── Cross-Meeting Natural Language Q&A with Clickable [MM:SS] Audio Jump Citations   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 🚀 Key Features
 
-* **🎥 Google Meet-Style Live Meeting Rooms**: Launch live in-browser video meetings with camera, microphone, screen sharing, speaking ripple visualizer, and 1-click invite link sharing.
-* **🔴 In-Browser Live Recording**: Automatically records the ongoing video and audio using `MediaRecorder` and uploads it to the meeting workspace upon ending the call.
-* **🗣️ Real-Time Live Speech-to-Text**: Continuous browser speech recognition with real-time floating captions and timestamped transcript feed.
-* **💡 Live Action Items & Decisions**: Identifies tasks, priorities, assignees, and consensus agreements live as the conversation unfolds.
-* **🎙️ Audio & Video Processing**: Upload MP3, WAV, M4A, MP4, WebM, and MOV recordings. Stream seamlessly with HTTP 206 Partial Content range requests.
-* **📝 Accurate Speech-to-Text**: Whisper model transcription with word-level start and end timestamps.
-* **👥 Speaker Diarization**: Disentangles multiple speakers using Pyannote Community-1 clustering and stabilization algorithms.
-* **🧠 Structured AI Summaries**: Executive briefs, discussion topics, and consensus points powered by Google Gemini, OpenAI, or smart local heuristic NLP fallback.
-* **✅ Action Item Extraction**: Automatically identifies tasks, assigns owners, classifies priority (`High`, `Medium`, `Low`), and extracts deadlines with interactive completion toggles.
-* **📌 Decision Log**: Dedicated repository of team agreements and strategic decisions with timestamp links.
-* **⏱️ Audio-Transcript Synchronization**: Built-in audio player with speed controls (`1x`, `1.25x`, `1.5x`, `2x`), scrubbing, and instant jump-to-time navigation from any citation or transcript line.
-* **🤖 RAG-Based AI Meeting Assistant**: Natural-language conversational Q&A over single meetings or the entire meeting history with `[MM:SS]` references.
-* **📧 AI Follow-Up Email Generator**: Automatically crafts email recaps with action item checklists and custom instruction support.
-* **🌓 Dark & Light Mode**: Complete theme system with automatic system preference detection, persistent switching, and high-contrast typing.
-* **⚡ Asynchronous Background Execution**: Celery worker integration with automatic FastAPI `BackgroundTasks` fallback.
+### 🎥 1. Google Meet-Style Live Meeting Rooms (`/meetings/{id}/room`)
+* **Instant 1-Click Launch**: Launch a live video room directly with one click from the dashboard or meeting list—no complex pre-scheduling required.
+* **1-Click Shareable Invite Links**: Click **"Copy Link"** to invite guests or coworkers. Guests who open the link in their own account are automatically enrolled as meeting participants.
+* **Camera, Microphone & Screen Share**: Toggle video feeds and audio inputs, or share full-screen displays, application windows, or browser tabs with picture-in-picture previews.
+* **Active Speaker Ripple & Grid Layout**: Adaptive video grid layout dynamically accommodates 1, 2, or multiple participants with live pulsing green rings indicating active speakers.
+* **Echo Guard (Same-Machine Testing)**: Top-right "Mute Speaker" control on remote participant video tiles allows multi-tab testing on the same laptop without screeching feedback loops.
+* **Guaranteed Hardware LED Shutdown**: When leaving or ending a meeting, all camera, microphone, screen tracks, Web Speech instances, and AudioContext nodes are forcefully released—turning off hardware indicator lights immediately.
+
+### 🗣️ 2. Real-Time Live Floating Captions & Multi-Peer Subtitles
+* **Multi-Peer Live Subtitle Broadcasting**: Continuous speech recognition runs in the browser. As **any** participant speaks (Host or Candidate), live interim words and final subtitles float across **everyone's** screen in real time with the speaker's name (`[Yamini]: ...`, `[Munni]: ...`).
+* **Browser Autoplay & User Gesture Auto-Activation**: Overcomes Chrome's autoplay gesture policy with automatic activation upon first user interaction and a 1-click floating "Turn On Captions" banner.
+* **Synchronized Canonical Meeting Clock**: All participants share a unified meeting epoch clock. When a guest joins at `01:10`, their clock automatically begins at `01:10` instead of `00:00`, ensuring timestamps remain strictly chronological across the board without timezone skews.
+* **Live Drawer with Captions, Actions & Decisions**: An expandable right-hand sidebar displays the scrolling transcript feed, live-detected action items, strategic decisions, and quick meeting notes in real time.
+
+### 🔴 3. Single Canonical Master Recording
+* **Unified Whole-Meeting Audio/Video Capture**: The host's browser automatically mixes local microphone input and incoming WebRTC remote audio streams into a single canonical WebM/MP4 recording using the Web Audio API and `MediaRecorder`.
+* **Zero Duplicate Recordings**: Only one unified master recording is created and uploaded when the host ends the call—preventing redundant or conflicting files.
+* **Instant Automatic Transition**: Ending the meeting automatically finalizes the recording, saves live transcripts, kicks off background AI summarization, and redirects all participants directly to the meeting cockpit.
+
+### 🎙️ 4. Audio Processing & Deep Diarization Pipeline
+* **Multi-Format Ingestion**: Supports `.mp3`, `.wav`, `.m4a`, `.mp4`, `.webm`, and `.mov` recording uploads.
+* **OpenAI Whisper Speech-to-Text**: High-accuracy word-level transcription with precise millisecond boundaries.
+* **Pyannote Speaker Diarization**: Disentangles and clusters multiple voices with heuristic stabilization to maintain consistent speaker labels across long conversations.
+* **HTTP 206 Partial Content Streaming**: Fast, buffer-free audio and video seeking with byte-range requests.
+
+### 🧠 5. Structured Meeting Intelligence & RAG Assistant
+* **Executive Summary**: Comprehensive overviews and structured discussion themes powered by Google Gemini, OpenAI, or the built-in heuristic NLP fallback.
+* **Action Items**: Identifies tasks, assigns owners, classifies priority (`High`, `Medium`, `Low`), and extracts target deadlines with interactive status checkboxes.
+* **Decision Tracking**: Dedicated log capturing key architectural choices, consensus agreements, and next steps.
+* **Synchronized Audio-Transcript Player**: Built-in audio bar with variable playback speeds (`1x`, `1.25x`, `1.5x`, `2x`), waveform scrubber, and real-time active transcript auto-scrolling and highlighting.
+* **Conversational Cross-Meeting RAG Assistant**: Ask questions across single meetings or the entire organization's meeting history. Responses cite exact `[MM:SS]` timestamps—clicking any citation instantly seeks the audio player to that exact moment.
+* **Follow-Up Email Drafter**: 1-click generation of formatted recap emails including action checklists and support for custom prompt instructions.
+
+### 🛡️ 6. Multi-Tenant Security & Theme Customization
+* **Strict Per-User Data Isolation**: PostgreSQL foreign key isolation ensures users only see meetings they launched or attended.
+* **Modern Dynamic Color Themes**: Switch between Light, Dark, and Cyber Emerald AI palettes with persistent local storage.
 
 ---
 
@@ -91,16 +134,17 @@ Interactive Frontend (React 19, Vite, Tailwind CSS v4)
 Ai-meeting-workspace/
 ├── backend/
 │   ├── alembic/                       # Database schema migrations
-│   │   └── versions/                  # Migration scripts (tables, chunks, etc.)
+│   │   └── versions/                  # Migration scripts (meetings, transcripts, participants, etc.)
 │   ├── app/
 │   │   ├── api/routes/
 │   │   │   ├── assistant.py           # RAG chat & semantic search endpoints
 │   │   │   ├── auth.py                # Registration, login, guest session & cleanup
 │   │   │   ├── health.py              # Health check endpoint
-│   │   │   ├── meetings.py            # Meetings CRUD operations
+│   │   │   ├── meetings.py            # Meetings CRUD, join endpoint & live transcript batch save
 │   │   │   ├── recordings.py          # Recording upload & HTTP 206 audio streaming
+│   │   │   ├── signaling.py           # Multi-user WebRTC & live caption WebSocket signaling
 │   │   │   ├── summaries.py           # Summaries, action items, decisions & email draft
-│   │   │   └── transcripts.py         # Transcript segment retrieval
+│   │   │   └── transcripts.py         # Chronological transcript segment retrieval
 │   │   ├── core/
 │   │   │   ├── config.py              # Pydantic environment configuration
 │   │   │   └── security.py            # JWT tokens & password hashing
@@ -109,7 +153,7 @@ Ai-meeting-workspace/
 │   │   ├── models/                    # SQLAlchemy database models
 │   │   │   ├── action_item.py
 │   │   │   ├── decision.py
-│   │   │   ├── meeting.py
+│   │   │   ├── meeting.py             # Meeting & MeetingParticipant models
 │   │   │   ├── meeting_summary.py
 │   │   │   ├── recording.py
 │   │   │   ├── transcript.py
@@ -145,19 +189,20 @@ Ai-meeting-workspace/
 │   │   │   │   ├── FollowupEmailModal.tsx
 │   │   │   │   ├── MeetingAssistantDrawer.tsx # Conversational RAG drawer
 │   │   │   │   └── SummaryView.tsx
-│   │   │   └── ThemeToggle.tsx        # Sun/Moon light & dark mode toggle
+│   │   │   └── ThemeToggle.tsx        # Dynamic palette & dark/light mode toggle
 │   │   ├── pages/
 │   │   │   ├── ActionItems.tsx        # Centralized task repository
 │   │   │   ├── LandingPage.tsx        # Public landing & feature showcase
+│   │   │   ├── LiveMeetingRoom.tsx    # Google Meet-style collaborative video room
 │   │   │   ├── Login.tsx              # Sign In, Create Account & Guest Mode
 │   │   │   ├── MeetingDetails.tsx     # Full meeting cockpit & audio sync
-│   │   │   ├── Meetings.tsx           # Meeting list & creation
+│   │   │   ├── Meetings.tsx           # Meeting list, launch & creation
 │   │   │   └── WorkspaceDashboard.tsx # Authenticated workspace dashboard
 │   │   ├── store/
 │   │   │   ├── authStore.ts           # Zustand auth store (guest + permanent)
 │   │   │   └── themeStore.ts          # Zustand dark/light theme store
 │   │   ├── App.tsx                    # Routing & protected routes
-│   │   ├── index.css                  # Tailwind CSS v4 & custom dark mode rules
+│   │   ├── index.css                  # Tailwind CSS v4 & custom theme rules
 │   │   └── main.tsx                   # React root entry
 │   ├── package.json
 │   ├── tsconfig.json
@@ -280,7 +325,7 @@ cd backend
 conda activate meeting_ai  # or source venv/bin/activate
 
 # Start Celery worker with solo pool (recommended for macOS & deep learning models):
-celery -A app.worker.celery_app.celery_app worker --pool=solo --loglevel=info
+celery -A app.worker.celery_app worker -l info -P solo
 ```
 
 > **macOS Note**: Celery defaults to `worker_pool="solo"` in `celery_app.py` to prevent Python 3.8+ `spawn` multiprocess unpack issues and Metal/MPS memory duplication when running PyTorch, Whisper, and Pyannote.
@@ -301,15 +346,28 @@ Open your browser and navigate to **`http://localhost:5173`**.
 
 ---
 
-## 🧪 Testing the Application Flow
+## 🧪 Testing the Application Flows
 
-1. **Landing Page (`/`)**: Explore the project presentation or click **"Try Without Account"** to immediately launch Guest Mode.
-2. **Create a Meeting**: Click **"New Meeting"**, add a title, description, and scheduled date.
-3. **Upload Recording**: Upload an audio or video file (`.mp3`, `.wav`, `.m4a`, `.mp4`). The Celery worker will asynchronously transcribe with Whisper, perform speaker diarization, align transcript segments, extract action items, and build vector chunks.
-4. **Playback & Sync**: Click **"Play"** on the recording. Notice how transcript cards highlight as audio advances, and clicking any line jumps playback directly to that moment.
-5. **AI Summary & Follow-Up Email**: Inspect generated discussion points, toggle action item statuses, and draft a recap email.
-6. **Chat with AI Assistant**: Open the **"Ask AI"** drawer to ask questions across meetings (e.g., *"What did Daniel mention about the landing page?"*). Click timestamp pills in the citations to verify against the source audio.
-7. **Toggle Dark/Light Mode**: Click the Sun/Moon icon in the top header. Test typing in any input field to enjoy high-contrast black text on clean white inputs.
+### Flow A: Live Meeting Room (Google Meet Style)
+1. **Launch a Live Meeting**: From the dashboard or **"Meetings"** page, click **"Launch Instant Meeting"** (or open `/meetings/new/room`). Allow browser camera and microphone access.
+2. **Invite Other Participants**:
+   - In the live room, click **"Copy Link"** in the top bar or invite card.
+   - Open another browser window or incognito tab signed into a different account, paste the link, and enter.
+   - Both users will immediately appear in the balanced video grid via WebRTC.
+3. **Real-Time Floating Subtitles**:
+   - Speak into either microphone. Live floating subtitles immediately display on **both** users' screens with speaker attribution (`[User Name]: ...`).
+   - Notice the speaking ripple visualizer and real-time feed in the right-hand **"Captions"** drawer.
+4. **End & Auto-Analyze**:
+   - The host clicks **"End & Save Meeting"**.
+   - Camera and microphone indicators turn off immediately.
+   - The master video/audio recording is uploaded, live transcripts are synchronized starting cleanly at `00:00`, and the meeting workspace opens with auto-generated summaries, action items, and decisions ready for review.
+
+### Flow B: Recording Upload & RAG Assistant
+1. **Upload Recording**: Click **"New Meeting"** or open an existing meeting card and upload an audio or video file (`.mp3`, `.wav`, `.m4a`, `.mp4`).
+2. **Background Processing**: The Celery worker transcribes speech with Whisper, diarizes speakers with Pyannote, aligns segments, and extracts action items and vector chunks.
+3. **Playback & Sync**: Click **"Play"** on the recording bar. As audio advances, corresponding transcript cards highlight automatically. Click any timestamp to jump to that moment.
+4. **Conversational Assistant**: Open the **"Ask AI"** drawer and ask natural language questions (e.g., *"What did the team decide about deployment?"*). Click citation pills to jump directly to the relevant audio segment.
+5. **Theme Selection**: Toggle the Sun/Moon/Palette button in the header to switch between light, dark, and cyber emerald themes.
 
 ---
 
@@ -321,28 +379,35 @@ Open your browser and navigate to **`http://localhost:5173`**.
 | `POST` | `/api/auth/login` | Authenticate and obtain JWT access token |
 | `POST` | `/api/auth/guest` | Launch an ephemeral guest session |
 | `DELETE` | `/api/auth/guest/cleanup` | Wipe guest meetings, recordings, and files |
-| `GET` | `/api/meetings` | List all meetings for the current user |
-| `POST` | `/api/meetings` | Create a new meeting |
-| `GET` | `/api/meetings/{id}` | Retrieve meeting details and metadata |
+| `GET` | `/api/meetings` | List isolated meetings owned or attended by the current user |
+| `POST` | `/api/meetings` | Create a new scheduled meeting |
+| `GET` | `/api/meetings/{id}` | Retrieve meeting details and participant metadata |
+| `POST` | `/api/meetings/{id}/join` | Register current authenticated user as an attendee of an existing meeting |
 | `POST` | `/api/meetings/{id}/recordings` | Upload meeting audio/video file |
-| `GET` | `/api/meetings/{id}/recordings/{rec_id}/stream` | HTTP 206 Partial Content audio stream |
-| `GET` | `/api/meetings/{id}/transcripts` | Retrieve timestamped, diarized transcript segments |
-| `GET` | `/api/meetings/{id}/summary` | Retrieve meeting summary |
+| `GET` | `/api/meetings/{id}/recordings/{rec_id}/stream` | HTTP 206 Partial Content audio streaming range request |
+| `POST` | `/api/meetings/{id}/transcripts` | Save streaming/live transcript segments generated during live calls |
+| `GET` | `/api/meetings/{id}/transcripts` | Retrieve timestamped, deduplicated transcript segments starting at `00:00` |
+| `GET` | `/api/meetings/{id}/summary` | Retrieve meeting summary, action items, and decisions |
 | `POST` | `/api/meetings/{id}/summary/generate` | Generate or regenerate AI summary & insights |
 | `GET` | `/api/action-items` | Centralized repository of all user action items |
 | `PATCH` | `/api/meetings/{id}/action-items/{item_id}` | Update action item status or assignee |
 | `POST` | `/api/meetings/{id}/followup-email` | Draft recap email with custom instructions |
 | `POST` | `/api/assistant/chat` | Cross-meeting or single-meeting RAG conversational Q&A |
 | `GET` | `/api/assistant/search` | Semantic chunk search across transcripts |
+| `WS` | `/api/ws/meetings/{id}` | Real-time WebRTC mesh signaling, media state & live caption broadcast |
 
 ---
 
 ## 💡 Troubleshooting
 
 * **Celery `ValueError: not enough values to unpack` on macOS**:  
-  Ensure Celery is run with `--pool=solo`. This is configured by default in `backend/app/worker/celery_app.py`.
+  Ensure Celery is run with `--pool=solo` (e.g. `celery -A app.worker.celery_app worker -l info -P solo`).
 * **Audio playback doesn't play**:  
   Verify that the recording processing status is `completed` and that Docker containers (`ai-meeting-postgres`, `ai-meeting-redis`) are running.
+* **Camera or Microphone blocked**:  
+  Ensure browser permissions are granted for `http://localhost:5173`. If testing between two tabs on the same computer, use the **"Mute Speaker"** button on the remote participant tile to prevent acoustic audio feedback.
+* **Live Captions not appearing**:  
+  Click anywhere in the meeting window or click the floating **"Turn On Captions"** button to allow browser speech recognition activation under Chromium autoplay guidelines.
 * **Port Conflicts (5432 or 6379)**:  
   If local Postgres or Redis is already running on your machine, stop them (`brew services stop postgresql` / `brew services stop redis`) or change the mapped port in `docker-compose.yml`.
 
